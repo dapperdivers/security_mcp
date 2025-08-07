@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  bearer-mcp:
+    image: bearer-mcp:final
+    build:
+      context: .
+      dockerfile: Dockerfile.final
+    volumes:
+      - ./workspace:/workspace
+      - ./config:/config
+      # Mount host's Python packages if available
+      - ~/.local/lib/python3.11/site-packages:/usr/local/lib/python3.11/site-packages:ro
+    environment:
+      - MCP_WORKING_DIRECTORY=/workspace
+      - PYTHONUNBUFFERED=1
+    command: sh -c "pip install mcp>=1.2.0 2>/dev/null || echo 'Using mounted MCP' && python bearer_mcp_server.py"
+    stdin_open: true
+    tty: true
+    
+  # Alternative: with Bearer CLI pre-installed
+  bearer-mcp-with-cli:
+    image: bearer-mcp:final
+    volumes:
+      - ./workspace:/workspace
+      - ./config:/config
+      - /usr/local/bin/bearer:/usr/local/bin/bearer:ro  # Mount Bearer from host
+    environment:
+      - MCP_WORKING_DIRECTORY=/workspace
+      - PYTHONUNBUFFERED=1
+    command: python bearer_mcp_server.py
+    stdin_open: true
+    tty: true

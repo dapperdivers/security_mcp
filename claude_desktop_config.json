@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "bearer-security": {
+      "command": "python",
+      "args": ["/home/derek/projects/security_mcp/bearer_mcp_server.py"],
+      "env": {
+        "MCP_WORKING_DIRECTORY": "/path/to/your/project"
+      }
+    }
+  }
+}
