@@ -1,6 +1,6 @@
 # Multi-stage production Dockerfile with security best practices
 # Build stage - for downloading and preparing dependencies
-FROM python:3.11-slim-trixie AS builder
+FROM python:3.11-slim-bookworm AS builder
 
 # Build arguments
 ARG TARGETARCH=amd64
@@ -34,7 +34,7 @@ RUN python -m venv /opt/venv && \
     pip install --no-cache-dir -r requirements.txt
 
 # Runtime stage - minimal final image
-FROM python:3.11-slim-trixie AS runtime
+FROM python:3.11-slim-bookworm AS runtime
 
 # Runtime build arguments for metadata
 ARG BUILD_DATE
@@ -99,8 +99,8 @@ VOLUME ["/workspace", "/tmp"]
 
 # Security and build metadata labels
 LABEL maintainer="dapperdivers" \
-      org.opencontainers.image.title="Security MCP Server" \
-      org.opencontainers.image.description="Independent MCP server that wraps the Bearer CLI security scanning tool. Not affiliated with Bearer." \
+      org.opencontainers.image.title="Bearer MCP Server" \
+      org.opencontainers.image.description="MCP server that wraps the Bearer CLI security scanning tool with auto-updated Bearer version" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.created="${BUILD_DATE}" \
       org.opencontainers.image.revision="${VCS_REF}" \
