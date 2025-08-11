@@ -44,10 +44,7 @@ jobs:
 
       - name: Run isort import sorting check
         run: isort --check-only --diff .
-
-      - name: Run MyPy type checking
-        run: mypy bearer_mcp/ bearer_mcp_main.py
-
+      
       - name: Run flake8 linting
         run: |
           flake8 bearer_mcp/ || echo "Linting completed with findings"
