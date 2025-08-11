@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "bearer-mcp": {
+      "command": "docker",
+      "args": [
+        "run",
+        "--rm",
+        "-i",
+        "-v", ".:/workspace:rw",
+        "bearer-mcp:latest",
+        "python", "bearer_mcp_server.py"
+      ],
+      "env": {
+        "MCP_WORKING_DIRECTORY": "/workspace"
+      },
+      "name": "Bearer Security Scanner",
+      "description": "MCP server for Bearer CLI security scanning tool running in Docker"
+    }
+  }
+}

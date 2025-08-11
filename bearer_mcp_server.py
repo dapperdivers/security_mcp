@@ -16,8 +16,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import mcp.server.stdio
+from mcp.server.sse import SseServerTransport
 import mcp.types as types
-from mcp.server import NotificationOptions, Server
+from mcp.server import Server, InitializationOptions
+from mcp.types import ServerCapabilities, ToolsCapability
+from starlette.responses import HTMLResponse
+import uvicorn
 
 # Configure logging to stderr (required for STDIO transport)
 logging.basicConfig(
@@ -155,7 +159,7 @@ async def handle_list_tools() -> list[types.Tool]:
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Path to scan (directory or file). Relative paths are resolved from working directory."
+                        "description": "Path to scan (directory or file). Defaults to /workspace. Relative paths are resolved from /workspace."
                     },
                     "format": {
                         "type": "string",
@@ -185,8 +189,7 @@ async def handle_list_tools() -> list[types.Tool]:
                         "default": False,
                         "description": "Suppress progress output"
                     }
-                },
-                "required": ["path"]
+                }
             }
         ),
         types.Tool(
@@ -199,17 +202,13 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="bearer_list_rules",
-            description="List available Bearer security rules",
+            description="Get information about Bearer security rules (rules are documented online at docs.bearer.com/reference/rules/)",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "language": {
                         "type": "string",
-                        "description": "Filter rules by programming language (e.g., javascript, python, java)"
-                    },
-                    "category": {
-                        "type": "string",
-                        "description": "Filter rules by category (e.g., security, privacy)"
+                        "description": "Optional: Language to get information about (e.g., javascript, python, java, ruby, php, go)"
                     }
                 }
             }
@@ -261,19 +260,42 @@ async def handle_call_tool(
 async def handle_bearer_scan(arguments: dict[str, Any]) -> list[types.TextContent]:
     """Handle Bearer security scan tool."""
     path_str = arguments.get("path")
-    if not path_str:
-        raise ValueError("Path is required for Bearer scan")
     
     try:
-        # Validate and resolve path
-        scan_path = validate_path(path_str, must_exist=True)
+        # Default to /workspace if no path provided (Docker container volume)
+        if not path_str:
+            # When running in Docker, /workspace is the mounted volume
+            scan_path = Path("/workspace")
+            if not scan_path.exists():
+                # Fallback to working directory if /workspace doesn't exist
+                scan_path = WORKING_DIRECTORY or Path.cwd()
+        else:
+            # If a specific path is provided, resolve it relative to /workspace
+            if not Path(path_str).is_absolute():
+                # Make relative paths relative to /workspace
+                scan_path = Path("/workspace") / path_str
+            else:
+                scan_path = Path(path_str)
+            
+            # Validate the path exists
+            if not scan_path.exists():
+                raise ValueError(f"Path does not exist: {scan_path}")
         
         # Build command arguments
         cmd_args = ["scan", str(scan_path)]
         
+        # Add scanner types (SAST and secrets detection)
+        cmd_args.extend(["--scanner", "sast,secrets"])
+        
         # Add format option
         output_format = arguments.get("format", "json")
         cmd_args.extend(["--format", output_format])
+        
+        # Add no-color flag for cleaner output
+        cmd_args.append("--no-color")
+        
+        # Don't skip test files
+        cmd_args.append("--skip-test=false")
         
         # Add severity filter
         if severity := arguments.get("severity"):
@@ -299,27 +321,71 @@ async def handle_bearer_scan(arguments: dict[str, Any]) -> list[types.TextConten
         # Run the scan
         result = await run_bearer_command(cmd_args)
         
-        if result["success"]:
-            if output_format == "json" and result["stdout"]:
-                try:
-                    # Try to parse and format JSON output
-                    scan_results = json.loads(result["stdout"])
-                    formatted_output = json.dumps(scan_results, indent=2)
+        # Bearer returns exit code 1 when it finds security issues, which is expected behavior
+        # Exit code 0 means no issues found, 1 means issues found, other codes are errors
+        has_findings = result["exit_code"] == 1
+        no_findings = result["exit_code"] == 0
+        scan_success = has_findings or no_findings
+        
+        if scan_success:
+            # Check stdout for JSON output (Bearer outputs JSON to stdout)
+            output_text = result["stdout"].strip() if result["stdout"] else ""
+            
+            if output_format == "json":
+                if output_text:
+                    try:
+                        # Parse the JSON output
+                        scan_results = json.loads(output_text)
+                        
+                        # Return the raw JSON data for the calling LLM
+                        # The LLM can then process this structured data
+                        return [types.TextContent(
+                            type="text",
+                            text=json.dumps(scan_results, indent=2)
+                        )]
+                    except json.JSONDecodeError as e:
+                        # If JSON parsing fails, log the error and return what we have
+                        logger.error(f"Failed to parse Bearer JSON output: {e}")
+                        logger.error(f"Raw output: {output_text[:500]}")
+                        
+                        # Still return the output, but note the parsing issue
+                        return [types.TextContent(
+                            type="text",
+                            text=f"Bearer scan completed but JSON parsing failed. Raw output:\n{output_text}"
+                        )]
+                else:
+                    # No output means no issues found - return empty JSON structure
+                    empty_result = {
+                        "findings": [],
+                        "summary": "No security issues detected"
+                    }
                     return [types.TextContent(
                         type="text",
-                        text=f"Bearer scan completed successfully:\n\n```json\n{formatted_output}\n```"
+                        text=json.dumps(empty_result, indent=2)
                     )]
-                except json.JSONDecodeError:
-                    pass
-            
-            return [types.TextContent(
-                type="text",
-                text=f"Bearer scan completed successfully:\n\n{result['stdout']}"
-            )]
+            else:
+                # Non-JSON format - return as is
+                if output_text:
+                    return [types.TextContent(
+                        type="text",
+                        text=output_text
+                    )]
+                else:
+                    return [types.TextContent(
+                        type="text",
+                        text="Bearer scan completed successfully. No security issues detected."
+                    )]
         else:
+            # Real error (not exit code 1)
+            error_response = {
+                "error": True,
+                "message": f"Bearer scan failed with exit code {result['exit_code']}",
+                "stderr": result["stderr"],
+                "command": result["command"]
+            }
             return [types.TextContent(
                 type="text",
-                text=f"Bearer scan failed:\n\nCommand: {result['command']}\nExit code: {result['exit_code']}\nError: {result['stderr']}"
+                text=json.dumps(error_response, indent=2) if output_format == "json" else f"Bearer scan failed:\n\nCommand: {result['command']}\nExit code: {result['exit_code']}\nError: {result['stderr']}"
             )]
     
     except Exception as e:
@@ -344,28 +410,54 @@ async def handle_bearer_version(arguments: dict[str, Any]) -> list[types.TextCon
 
 async def handle_bearer_list_rules(arguments: dict[str, Any]) -> list[types.TextContent]:
     """Handle Bearer list rules tool."""
-    cmd_args = ["rules", "list"]
+    language = arguments.get("language", "")
     
-    # Add language filter
-    if language := arguments.get("language"):
-        cmd_args.extend(["--language", language])
+    # Bearer CLI doesn't have a rules list command, so provide documentation info
+    rules_info = """
+Bearer Security Rules Information:
+
+Bearer has 473+ security rules across multiple programming languages:
+- Ruby
+- JavaScript/TypeScript  
+- Java
+- PHP
+- Go
+- Python
+
+Rules are categorized by:
+- OWASP Top 10 categories (A01-A10)
+- CWE (Common Weakness Enumeration) numbers
+- Language-specific vulnerabilities
+
+To use specific rules in scans:
+- Use --only-rule flag: bearer scan --only-rule "rule_id_1,rule_id_2" path/
+- Use --skip-rule flag: bearer scan --skip-rule "rule_id_1,rule_id_2" path/
+
+For the complete list of rules and their descriptions, visit:
+https://docs.bearer.com/reference/rules/
+"""
     
-    # Add category filter  
-    if category := arguments.get("category"):
-        cmd_args.extend(["--category", category])
+    if language:
+        language_specific_info = f"""
+Language-specific information for {language.lower()}:
+
+To scan only {language.lower()} files, Bearer automatically detects file types.
+Common {language.lower()} rule categories include:
+- Code injection vulnerabilities
+- Authentication/authorization issues
+- Data exposure risks
+- Insecure configurations
+- Third-party library vulnerabilities
+
+Example scan command for {language.lower()} projects:
+bearer scan --format json your_project_path/
+"""
+        rules_info += language_specific_info
     
-    result = await run_bearer_command(cmd_args)
-    
-    if result["success"]:
-        return [types.TextContent(
-            type="text",
-            text=f"Bearer rules:\n{result['stdout']}"
-        )]
-    else:
-        return [types.TextContent(
-            type="text",
-            text=f"Failed to list Bearer rules:\n{result['stderr']}"
-        )]
+    return [types.TextContent(
+        type="text",
+        text=rules_info
+    )]
 
 
 async def handle_bearer_init_config(arguments: dict[str, Any]) -> list[types.TextContent]:
@@ -391,20 +483,106 @@ async def handle_bearer_init_config(arguments: dict[str, Any]) -> list[types.Tex
         raise ValueError(f"Config initialization error: {str(e)}")
 
 
-async def main():
-    """Main entry point for the MCP server."""
+async def create_sse_app():
+    """Create Starlette app with SSE transport for Bearer MCP server."""
     # Check for working directory from environment variable
     if working_dir := os.getenv("MCP_WORKING_DIRECTORY"):
         set_working_directory(working_dir)
         logger.info(f"Working directory set from environment: {working_dir}")
     
-    # Run the server using stdio transport
-    async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
-        await server.run(
-            read_stream,
-            write_stream,
-            NotificationOptions(prompts_changed=False, resources_changed=False, tools_changed=False),
-        )
+    # Create SSE transport
+    sse_transport = SseServerTransport("/messages/")
+    
+    # Import required Starlette components
+    from starlette.applications import Starlette
+    from starlette.routing import Route, Mount
+    from starlette.responses import Response
+    
+    # Define SSE handler
+    async def handle_sse(request):
+        async with sse_transport.connect_sse(
+            request.scope, request.receive, request._send
+        ) as streams:
+            await server.run(
+                streams[0],
+                streams[1],
+                InitializationOptions(
+                    server_name="bearer-mcp-server",
+                    server_version="1.0.1",
+                    capabilities=ServerCapabilities(
+                        tools=ToolsCapability()
+                    )
+                )
+            )
+        # Return empty response to avoid NoneType error
+        return Response()
+    
+    # Define root handler
+    async def root(request):
+        return HTMLResponse("""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Bearer MCP Server</title>
+        </head>
+        <body>
+            <h1>Bearer MCP Server</h1>
+            <p>This is an MCP server that wraps the Bearer CLI security scanning tool.</p>
+            <p>SSE endpoint: <code>/sse</code></p>
+            <p>Messages endpoint: <code>/messages/</code></p>
+            <p>Status: Running</p>
+        </body>
+        </html>
+        """)
+    
+    # Create Starlette routes
+    routes = [
+        Route("/", endpoint=root, methods=["GET"]),
+        Route("/sse", endpoint=handle_sse, methods=["GET"]),
+        Mount("/messages/", app=sse_transport.handle_post_message),
+    ]
+    
+    # Create and return Starlette app
+    app = Starlette(routes=routes)
+    return app
+
+
+async def main():
+    """Main entry point for the MCP server."""
+    # Determine transport type from environment variable
+    transport_type = os.getenv("MCP_TRANSPORT", "stdio").lower()
+    
+    if transport_type == "sse":
+        # Run SSE server
+        host = os.getenv("MCP_SSE_HOST", "localhost")
+        port = int(os.getenv("MCP_SSE_PORT", "8000"))
+        logger.info(f"Starting SSE server on {host}:{port}")
+        
+        app = await create_sse_app()
+        config = uvicorn.Config(app, host=host, port=port, log_level="info")
+        server_instance = uvicorn.Server(config)
+        await server_instance.serve()
+        
+    else:
+        # Run stdio server (default)
+        logger.info("Starting stdio server")
+        # Check for working directory from environment variable
+        if working_dir := os.getenv("MCP_WORKING_DIRECTORY"):
+            set_working_directory(working_dir)
+            logger.info(f"Working directory set from environment: {working_dir}")
+        
+        async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
+            await server.run(
+                read_stream,
+                write_stream,
+                InitializationOptions(
+                    server_name="bearer-mcp-server",
+                    server_version="1.0.1",
+                    capabilities=ServerCapabilities(
+                        tools=ToolsCapability()
+                    )
+                )
+            )
 
 
 if __name__ == "__main__":

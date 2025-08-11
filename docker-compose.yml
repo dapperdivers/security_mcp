@@ -2,19 +2,22 @@ version: '3.8'
 
 services:
   bearer-mcp:
-    image: bearer-mcp:final
+    image: bearer-mcp:latest
     build:
       context: .
-      dockerfile: Dockerfile.final
+      dockerfile: Dockerfile
     volumes:
       - ./workspace:/workspace
       - ./config:/config
-      # Mount host's Python packages if available
-      - ~/.local/lib/python3.11/site-packages:/usr/local/lib/python3.11/site-packages:ro
+    ports:
+      - "8000:8000"
     environment:
       - MCP_WORKING_DIRECTORY=/workspace
+      - MCP_TRANSPORT=sse
+      - MCP_SSE_HOST=0.0.0.0
+      - MCP_SSE_PORT=8000
       - PYTHONUNBUFFERED=1
-    command: sh -c "pip install mcp>=1.2.0 2>/dev/null || echo 'Using mounted MCP' && python bearer_mcp_server.py"
+    command: python bearer_mcp_server.py
     stdin_open: true
     tty: true
     

@@ -23,7 +23,8 @@ WORKDIR /app
 COPY pyproject.toml bearer_mcp_server.py ./
 
 # Install Python dependencies
-RUN pip install --no-cache-dir -e .
+RUN pip install --no-cache-dir -e . && \
+    pip install --no-cache-dir fastapi>=0.104.0 uvicorn>=0.24.0
 
 # Create workspace directory
 RUN mkdir -p /workspace /config
@@ -44,8 +45,11 @@ USER mcpuser
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD bearer version > /dev/null || exit 1
 
+# Expose port for SSE transport
+EXPOSE 8000
+
 # Run the MCP server
-CMD ["python", "-m", "bearer_mcp_server"]
+CMD ["python", "bearer_mcp_server.py"]
 
 # Volume for scanning workspace
 VOLUME ["/workspace"]

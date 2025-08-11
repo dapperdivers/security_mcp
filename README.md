@@ -24,29 +24,49 @@ Bearer is a static application security testing (SAST) tool that scans source co
 
 ### Option 1: Local Installation
 
-1. **Install Bearer CLI** (if not using Docker):
+1. **Clone the repository**:
    ```bash
-   curl -sfL https://raw.githubusercontent.com/Bearer/bearer/main/contrib/install.sh | sh
+   git clone https://github.com/yourusername/bearer-mcp-server.git
+   cd bearer-mcp-server
    ```
 
-2. **Install the MCP Server**:
+2. **Install Bearer CLI**:
    ```bash
-   git clone <repository-url>
-   cd security_mcp
+   # macOS/Linux
+   curl -sfL https://raw.githubusercontent.com/Bearer/bearer/main/contrib/install.sh | sh
+   
+   # Or using Homebrew (macOS)
+   brew install bearer/tap/bearer
+   ```
+
+3. **Install Python dependencies**:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+4. **Install the MCP Server**:
+   ```bash
    pip install -e .
    ```
 
-### Option 2: Docker Installation
+### Option 2: Docker Installation (Recommended)
 
-1. **Build the Docker image**:
+1. **Clone the repository**:
+   ```bash
+   git clone https://github.com/yourusername/bearer-mcp-server.git
+   cd bearer-mcp-server
+   ```
+
+2. **Build the Docker image**:
    ```bash
    docker build -t bearer-mcp-server .
    ```
 
-2. **Or use Docker Compose**:
+3. **Or use Docker Compose**:
    ```bash
    docker-compose build
    ```
+
 
 ## Configuration
 
@@ -219,13 +239,21 @@ Logs are written to stderr (required for STDIO transport) and include:
 - **Container Security**: Docker image runs as non-root user
 - **Resource Limits**: Docker Compose includes resource constraints
 
+## Quick Start
+
+After installation, configure your MCP client and start using Bearer security scanning:
+
+1. **Add to your MCP client configuration** (see Configuration section)
+2. **Restart your MCP client**
+3. **Ask your AI assistant**: "Scan my project for security vulnerabilities with Bearer"
+
 ## Development
 
 ### Running Locally
 
 ```bash
 # Install in development mode
-pip install -e .[dev]
+pip install -e .
 
 # Run the server directly
 python bearer_mcp_server.py
@@ -237,18 +265,11 @@ MCP_WORKING_DIRECTORY=/path/to/project python bearer_mcp_server.py
 ### Testing
 
 ```bash
-# Install test dependencies
-pip install -e .[dev]
-
 # Run tests
-pytest
+python -m pytest tests/
 
-# Check code formatting
-black . --check
-isort . --check-only
-
-# Type checking
-mypy bearer_mcp_server.py
+# Run specific test file
+python -m pytest tests/test_server.py
 ```
 
 ### Building Docker Image
