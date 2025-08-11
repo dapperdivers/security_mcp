@@ -2,9 +2,9 @@
 
 from .bearer_executor import BearerExecutor, executor, get_executor
 from .config import (
+    BEARER_BINARY,
     SERVER_NAME,
     SERVER_VERSION,
-    BEARER_BINARY,
     ServerConfig,
     config,
     get_logger,

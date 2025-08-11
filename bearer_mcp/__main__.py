@@ -14,6 +14,7 @@ logger = get_logger(__name__)
 
 class TransportType(Enum):
     """Available transport types."""
+
     STDIO = "stdio"
     SSE = "sse"
 
@@ -29,20 +30,20 @@ async def main():
     """Main entry point for the MCP server."""
     # Configure environment
     configure_environment()
-    
+
     # Create server instance
     bearer_server = create_server()
     server_instance = bearer_server.get_server_instance()
-    
+
     # Determine transport type
     transport_env = os.getenv("MCP_TRANSPORT", "stdio").lower()
-    
+
     try:
         transport_type = TransportType(transport_env)
     except ValueError:
         logger.error(f"Invalid transport type: {transport_env}. Using STDIO.")
         transport_type = TransportType.STDIO
-    
+
     # Run server with appropriate transport
     await (
         run_sse_server(server_instance)

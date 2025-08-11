@@ -12,12 +12,12 @@ logger = get_logger(__name__)
 async def run_stdio_server(server_instance):
     """
     Run the MCP server using STDIO transport.
-    
+
     Args:
         server_instance: The MCP Server instance to run
     """
     logger.info("Starting STDIO server")
-    
+
     async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
         await server_instance.run(
             read_stream,
@@ -25,8 +25,6 @@ async def run_stdio_server(server_instance):
             InitializationOptions(
                 server_name=SERVER_NAME,
                 server_version=SERVER_VERSION,
-                capabilities=ServerCapabilities(
-                    tools=ToolsCapability()
-                )
-            )
+                capabilities=ServerCapabilities(tools=ToolsCapability()),
+            ),
         )

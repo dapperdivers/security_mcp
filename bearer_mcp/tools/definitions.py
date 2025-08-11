@@ -7,7 +7,6 @@ comply with the MCP protocol specification.
 
 from mcp import types
 
-
 # Tool definition constants
 BEARER_SCAN_REPO_TOOL = types.Tool(
     name="bearer_scan_repo",
@@ -19,32 +18,32 @@ BEARER_SCAN_REPO_TOOL = types.Tool(
                 "type": "string",
                 "enum": ["json", "yaml", "sarif", "html"],
                 "default": "json",
-                "description": "Output format for the scan results"
+                "description": "Output format for the scan results",
             },
             "severity": {
                 "type": "string",
                 "enum": ["critical", "high", "medium", "low"],
-                "description": "Minimum severity level to report"
+                "description": "Minimum severity level to report",
             },
             "rules": {
                 "type": "string",
-                "description": "Comma-separated list of rule IDs to run (e.g., 'javascript_lang_eval,ruby_rails_logger')"
+                "description": "Comma-separated list of rule IDs to run (e.g., 'javascript_lang_eval,ruby_rails_logger')",
             },
             "skip_rules": {
                 "type": "string",
-                "description": "Comma-separated list of rule IDs to skip"
+                "description": "Comma-separated list of rule IDs to skip",
             },
             "output_file": {
                 "type": "string",
-                "description": "Path to save scan results to file"
+                "description": "Path to save scan results to file",
             },
             "quiet": {
                 "type": "boolean",
                 "default": False,
-                "description": "Suppress progress output"
-            }
-        }
-    }
+                "description": "Suppress progress output",
+            },
+        },
+    },
 )
 
 BEARER_SCAN_TOOL = types.Tool(
@@ -56,47 +55,44 @@ BEARER_SCAN_TOOL = types.Tool(
         "properties": {
             "path": {
                 "type": "string",
-                "description": "Path to scan (directory or file). Relative paths are resolved from /workspace."
+                "description": "Path to scan (directory or file). Relative paths are resolved from /workspace.",
             },
             "format": {
                 "type": "string",
                 "enum": ["json", "yaml", "sarif", "html"],
                 "default": "json",
-                "description": "Output format for the scan results"
+                "description": "Output format for the scan results",
             },
             "severity": {
                 "type": "string",
                 "enum": ["critical", "high", "medium", "low"],
-                "description": "Minimum severity level to report"
+                "description": "Minimum severity level to report",
             },
             "rules": {
                 "type": "string",
-                "description": "Comma-separated list of rule IDs to run (e.g., 'javascript_lang_eval,ruby_rails_logger')"
+                "description": "Comma-separated list of rule IDs to run (e.g., 'javascript_lang_eval,ruby_rails_logger')",
             },
             "skip_rules": {
                 "type": "string",
-                "description": "Comma-separated list of rule IDs to skip"
+                "description": "Comma-separated list of rule IDs to skip",
             },
             "output_file": {
                 "type": "string",
-                "description": "Path to save scan results to file"
+                "description": "Path to save scan results to file",
             },
             "quiet": {
                 "type": "boolean",
                 "default": False,
-                "description": "Suppress progress output"
-            }
-        }
-    }
+                "description": "Suppress progress output",
+            },
+        },
+    },
 )
 
 BEARER_VERSION_TOOL = types.Tool(
     name="bearer_version",
     description="Get Bearer CLI version information",
-    inputSchema={
-        "type": "object",
-        "properties": {}
-    }
+    inputSchema={"type": "object", "properties": {}},
 )
 
 BEARER_LIST_RULES_TOOL = types.Tool(
@@ -107,10 +103,10 @@ BEARER_LIST_RULES_TOOL = types.Tool(
         "properties": {
             "language": {
                 "type": "string",
-                "description": "Optional: Language to get information about (e.g., javascript, python, java, ruby, php, go)"
+                "description": "Optional: Language to get information about (e.g., javascript, python, java, ruby, php, go)",
             }
-        }
-    }
+        },
+    },
 )
 
 BEARER_INIT_CONFIG_TOOL = types.Tool(
@@ -121,20 +117,20 @@ BEARER_INIT_CONFIG_TOOL = types.Tool(
         "properties": {
             "path": {
                 "type": "string",
-                "description": "Directory to create configuration in (defaults to working directory)"
+                "description": "Directory to create configuration in (defaults to working directory)",
             }
-        }
-    }
+        },
+    },
 )
 
 
 class ToolRegistry:
     """Registry for Bearer MCP tools.
-    
+
     This class provides a centralized way to manage and access tool definitions
     while maintaining compatibility with the MCP protocol.
     """
-    
+
     def __init__(self):
         """Initialize the tool registry with Bearer tools."""
         self._tools: dict[str, types.Tool] = {
@@ -144,40 +140,40 @@ class ToolRegistry:
             "bearer_list_rules": BEARER_LIST_RULES_TOOL,
             "bearer_init_config": BEARER_INIT_CONFIG_TOOL,
         }
-    
+
     def get_tool(self, name: str) -> types.Tool | None:
         """Get a specific tool by name.
-        
+
         Args:
             name: The tool name to retrieve
-            
+
         Returns:
             The tool definition or None if not found
         """
         return self._tools.get(name)
-    
+
     def get_all_tools(self) -> list[types.Tool]:
         """Get all registered tool definitions.
-        
+
         Returns:
             List of all tool definitions for MCP
         """
         return list(self._tools.values())
-    
+
     def get_tool_names(self) -> list[str]:
         """Get all registered tool names.
-        
+
         Returns:
             List of tool names
         """
         return list(self._tools.keys())
-    
+
     def has_tool(self, name: str) -> bool:
         """Check if a tool is registered.
-        
+
         Args:
             name: The tool name to check
-            
+
         Returns:
             True if the tool is registered, False otherwise
         """
@@ -195,10 +191,10 @@ tool_registry = get_tool_registry()
 
 def get_mcp_tools() -> list[types.Tool]:
     """Get all Bearer MCP tool definitions.
-    
+
     This is the main function used by the MCP server to retrieve
     all available tool definitions.
-    
+
     Returns:
         List of types.Tool objects for MCP protocol
     """
@@ -207,10 +203,10 @@ def get_mcp_tools() -> list[types.Tool]:
 
 def get_tool_definition(name: str) -> types.Tool | None:
     """Get a specific tool definition by name.
-    
+
     Args:
         name: The tool name to retrieve
-        
+
     Returns:
         The tool definition or None if not found
     """
@@ -220,7 +216,7 @@ def get_tool_definition(name: str) -> types.Tool | None:
 # Export all tools as constants for direct access if needed
 __all__ = [
     "BEARER_SCAN_REPO_TOOL",
-    "BEARER_SCAN_TOOL", 
+    "BEARER_SCAN_TOOL",
     "BEARER_VERSION_TOOL",
     "BEARER_LIST_RULES_TOOL",
     "BEARER_INIT_CONFIG_TOOL",

@@ -17,14 +17,14 @@ logger = get_logger(__name__)
 
 class SSETransportServer:
     """SSE transport server for MCP."""
-    
+
     def __init__(self, server_instance, host: str = "localhost", port: int = 8000):
         self.server = server_instance
         self.host = host
         self.port = port
         self.transport: SseServerTransport | None = None
         self.app: Starlette | None = None
-    
+
     async def _handle_sse(self, request):
         """Handle SSE connections."""
         async with self.transport.connect_sse(
@@ -36,16 +36,15 @@ class SSETransportServer:
                 InitializationOptions(
                     server_name=SERVER_NAME,
                     server_version=SERVER_VERSION,
-                    capabilities=ServerCapabilities(
-                        tools=ToolsCapability()
-                    )
-                )
+                    capabilities=ServerCapabilities(tools=ToolsCapability()),
+                ),
             )
         return Response()
-    
+
     async def _handle_root(self, request):
         """Handle root endpoint with status page."""
-        return HTMLResponse(f"""
+        return HTMLResponse(
+            f"""
         <!DOCTYPE html>
         <html>
         <head>
@@ -112,25 +111,26 @@ class SSETransportServer:
             </div>
         </body>
         </html>
-        """)
-    
+        """
+        )
+
     def create_app(self) -> Starlette:
         """Create and configure the Starlette application."""
         self.transport = SseServerTransport("/messages/")
-        
+
         routes = [
             Route("/", endpoint=self._handle_root, methods=["GET"]),
             Route("/sse", endpoint=self._handle_sse, methods=["GET"]),
             Mount("/messages/", app=self.transport.handle_post_message),
         ]
-        
+
         self.app = Starlette(routes=routes)
         return self.app
-    
+
     async def serve(self):
         """Start the SSE server."""
         logger.info(f"Starting SSE server on {self.host}:{self.port}")
-        
+
         app = self.create_app()
         config = uvicorn.Config(app, host=self.host, port=self.port, log_level="info")
         server = uvicorn.Server(config)
@@ -140,12 +140,12 @@ class SSETransportServer:
 async def run_sse_server(server_instance):
     """
     Run the MCP server using SSE transport.
-    
+
     Args:
         server_instance: The MCP Server instance to run
     """
     host = os.getenv("MCP_SSE_HOST", "localhost")
     port = int(os.getenv("MCP_SSE_PORT", "8000"))
-    
+
     sse_server = SSETransportServer(server_instance, host, port)
     await sse_server.serve()

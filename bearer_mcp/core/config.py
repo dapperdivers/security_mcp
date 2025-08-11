@@ -5,9 +5,11 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+
 @dataclass(frozen=True)
 class ServerConfig:
     """Bearer MCP Server configuration."""
+
     name: str = "bearer-mcp-server"
     version: str = "1.0.1"
     bearer_binary: str = "bearer"
@@ -19,11 +21,7 @@ class ServerConfig:
 config = ServerConfig()
 
 # Logging configuration
-logging.basicConfig(
-    level=config.log_level,
-    format=config.log_format,
-    stream=sys.stderr
-)
+logging.basicConfig(level=config.log_level, format=config.log_format, stream=sys.stderr)
 
 # Server metadata (for backward compatibility)
 SERVER_NAME = config.name

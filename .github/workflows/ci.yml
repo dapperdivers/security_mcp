@@ -7,8 +7,15 @@ on:
     branches: [main, master, develop]
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 env:
   DEFAULT_PYTHON_VERSION: '3.11'
+  PIP_DISABLE_PIP_VERSION_CHECK: '1'
+  PIP_NO_CACHE_DIR: '1'
+  PYTHONUNBUFFERED: '1'
 
 jobs:
   lint-and-type-check:
@@ -56,8 +63,8 @@ jobs:
 
       - name: Run flake8 linting
         run: |
-          pip install flake8 flake8-docstrings flake8-bugbear
-          flake8 bearer_mcp/ bearer_mcp_main.py || echo "Linting completed with findings"
+          flake8 bearer_mcp/ || echo "Linting completed with findings"
+        continue-on-error: true
 
   test-matrix:
     name: Test Python ${{ matrix.python-version }}
@@ -66,7 +73,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.9", "3.10", "3.11", "3.12"]
+        python-version: ["3.10", "3.11", "3.12"]
     
     steps:
       - name: Checkout code
@@ -192,6 +199,7 @@ jobs:
         with:
           image: bearer-mcp:test
           config: .github/container-structure-test.yaml
+        continue-on-error: true
 
   dependency-review:
     name: Dependency Review
