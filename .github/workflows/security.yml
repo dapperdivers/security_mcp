@@ -200,6 +200,9 @@ jobs:
     name: Container Scan - Grype
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
     
     steps:
       - name: Checkout code
@@ -210,24 +213,19 @@ jobs:
           docker build -t bearer-mcp:security-scan .
 
       - name: Run Grype container scan
-        uses: anchore/scan-action@v3
-        id: grype
-        continue-on-error: true
+        uses: anchore/scan-action@v6
+        id: scan
         with:
           image: bearer-mcp:security-scan
-          fail-build: false
-          severity-cutoff: none
           output-format: sarif
-          add-cpes-if-none: true
+          fail-build: false
+          severity-cutoff: critical
 
       - name: Upload Grype SARIF results
         uses: github/codeql-action/upload-sarif@v3
-        if: always() && steps.grype.outputs.sarif != ''
-        continue-on-error: true
         with:
-          sarif_file: ${{ steps.grype.outputs.sarif }}
+          sarif_file: ${{ steps.scan.outputs.sarif }}
           category: "grype-container"
-          wait-for-processing: true
 
   # Container Security Scanning with Trivy
   container-scan-trivy:
