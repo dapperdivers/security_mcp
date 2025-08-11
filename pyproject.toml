@@ -3,11 +3,11 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "bearer-mcp-server"
+name = "security-mcp-server"
 version = "1.0.0"
-description = "MCP server that wraps the Bearer CLI security scanning tool"
+description = "Independent MCP server that wraps the Bearer CLI security scanning tool"
 authors = [
-    {name = "Bearer MCP Server", email = "noreply@example.com"}
+    {name = "dapperdivers"} 
 ]
 license = {text = "MIT"}
 readme = "README.md"
@@ -60,10 +60,11 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/bearer/bearer"
-Documentation = "https://docs.bearer.com"
-Repository = "https://github.com/bearer/bearer"
-Issues = "https://github.com/bearer/bearer/issues"
+Homepage = "https://github.com/dapperdivers/security_mcp"
+Documentation = "https://github.com/dapperdivers/security_mcp#readme"
+Repository = "https://github.com/dapperdivers/security_mcp"
+Issues = "https://github.com/dapperdivers/security_mcp/issues"
+"Bearer CLI" = "https://github.com/Bearer/bearer"
 
 [project.scripts]
 bearer-mcp-server = "bearer_mcp.__main__:run"

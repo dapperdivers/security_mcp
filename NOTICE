@@ -1,0 +1,24 @@
+Security MCP Server
+Copyright (c) 2025
+
+This product is an independent project that provides an MCP (Model Context Protocol)
+server interface for the Bearer CLI security scanning tool.
+
+IMPORTANT DISCLAIMERS:
+- This project is NOT affiliated with, endorsed by, or sponsored by Bearer.
+- This is an independent implementation maintained by dapperdivers.
+- Bearer CLI is a separate product with its own licensing and terms.
+
+Third-party Software:
+This software uses the following third-party tools:
+- Bearer CLI (https://github.com/Bearer/bearer) - Security scanning tool
+  Licensed under its own terms (see Bearer's repository for details)
+- Python and various Python packages (see requirements.txt)
+
+For questions about this MCP server, please contact:
+- GitHub: https://github.com/dapperdivers/security_mcp
+- Issues: https://github.com/dapperdivers/security_mcp/issues
+
+For questions about Bearer CLI itself, please refer to:
+- Bearer Documentation: https://docs.bearer.com
+- Bearer GitHub: https://github.com/Bearer/bearer

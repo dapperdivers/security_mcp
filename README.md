@@ -1,6 +1,8 @@
-# Bearer MCP Server
+# Security MCP Server
 
-A Model Context Protocol (MCP) server that wraps the Bearer CLI security scanning tool, providing AI assistants with the ability to perform static application security testing (SAST) on codebases.
+An independent Model Context Protocol (MCP) server maintained by [@dapperdivers](https://github.com/dapperdivers) that wraps the [Bearer CLI](https://github.com/Bearer/bearer) security scanning tool, providing AI assistants with the ability to perform static application security testing (SAST) on codebases.
+
+**Note**: This project is not affiliated with, endorsed by, or sponsored by Bearer. It is an independent implementation that uses the publicly available Bearer CLI tool.
 
 ## Features
 
@@ -26,13 +28,13 @@ Bearer is a static application security testing (SAST) tool that scans source co
 
 1. **Clone the repository**:
    ```bash
-   git clone https://github.com/yourusername/bearer-mcp-server.git
-   cd bearer-mcp-server
+   git clone https://github.com/dapperdivers/security_mcp.git
+   cd security_mcp
    ```
 
 2. **Build the Docker image**:
    ```bash
-   docker build -t bearer-mcp-server .
+   docker build -t security-mcp-server .
    ```
 
 3. **Or use Docker Compose**:
