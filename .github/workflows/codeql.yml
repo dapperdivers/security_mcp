@@ -48,8 +48,8 @@ jobs:
         with:
           category: "/language:python"
 
-  container-scan:
-    name: Container Security Scan
+  container-scan-grype:
+    name: Container Scan - Grype
     runs-on: ubuntu-latest
     timeout-minutes: 15
     
@@ -63,15 +63,47 @@ jobs:
 
       - name: Run Grype container scan
         uses: anchore/scan-action@v3
-        id: scan
+        id: grype
+        continue-on-error: true
         with:
           image: bearer-mcp:security-scan
           fail-build: false
-          severity-cutoff: critical
+          severity-cutoff: none
+          output-format: sarif
 
-      - name: Upload vulnerability report
+      - name: Upload Grype results
         uses: github/codeql-action/upload-sarif@v3
         if: always()
         with:
-          sarif_file: ${{ steps.scan.outputs.sarif }}
+          sarif_file: ${{ steps.grype.outputs.sarif }}
           category: ".github/workflows/security.yml:container-scan"
+
+  container-scan-trivy:
+    name: Container Scan - Trivy
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          docker build -t bearer-mcp:security-scan .
+
+      - name: Run Trivy container scan
+        uses: aquasecurity/trivy-action@master
+        continue-on-error: true
+        with:
+          image-ref: bearer-mcp:security-scan
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+          vuln-type: 'os,library'
+
+      - name: Upload Trivy results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-results.sarif
+          category: "trivy-container-scan"
