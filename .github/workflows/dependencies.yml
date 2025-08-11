@@ -26,6 +26,9 @@ permissions:
   pull-requests: write
   issues: write
 
+env:
+  BEARER_VERSION: "1.50.0"
+
 jobs:
   dependency-update:
     name: Update Dependencies
@@ -40,7 +43,7 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -93,9 +96,14 @@ jobs:
             
             # Update requirements.txt with compatible versions
             if [ "${UPDATE_TYPE}" = "patch" ]; then
-              # Only patch updates (same minor version)
-              pip-compile --upgrade-package '*' --resolver=backtracking requirements.in 2>/dev/null || \
-              pip-compile --upgrade --resolver=backtracking requirements.txt
+              # Only patch updates (same minor version) 
+              if [ -f "requirements.in" ]; then
+                pip-compile --upgrade-package '*' --resolver=backtracking requirements.in 2>/dev/null || \
+                pip-compile --upgrade --resolver=backtracking requirements.txt
+              else
+                echo "No requirements.in found, updating requirements.txt directly"
+                pip-compile --upgrade --resolver=backtracking requirements.txt || echo "Using pip list --outdated for updates"
+              fi
             elif [ "${UPDATE_TYPE}" = "major" ]; then
               # Allow major version updates
               pip-compile --upgrade --resolver=backtracking requirements.txt
@@ -160,7 +168,7 @@ jobs:
         id: bearer-check
         run: |
           # Check if there's a newer Bearer CLI version
-          CURRENT_VERSION=$(grep "BEARER_VERSION=" Dockerfile | cut -d'=' -f2 || echo "1.50.0")
+          CURRENT_VERSION=$(grep "BEARER_VERSION=" Dockerfile | cut -d'=' -f2 || echo "${{ env.BEARER_VERSION }}")
           echo "Current Bearer version: ${CURRENT_VERSION}"
           
           # Get latest release from GitHub API
@@ -177,6 +185,9 @@ jobs:
             # Update Dockerfile with new version
             sed -i "s/BEARER_VERSION=.*/BEARER_VERSION=${LATEST_VERSION}/g" Dockerfile
             sed -i "s/bearer_.*_linux_amd64.tar.gz/bearer_${LATEST_VERSION}_linux_amd64.tar.gz/g" Dockerfile
+            
+            # Update workflow files with new Bearer version
+            sed -i "s/BEARER_VERSION: \".*\"/BEARER_VERSION: \"${LATEST_VERSION}\"/g" .github/workflows/*.yml
           else
             echo "Bearer CLI is up to date"
             echo "bearer-update=false" >> $GITHUB_OUTPUT
@@ -184,7 +195,7 @@ jobs:
 
       - name: Create pull request
         if: (steps.update-deps.outputs.has-updates == 'true' || steps.bearer-check.outputs.bearer-update == 'true') && (inputs.create_pr != false)
-        uses: peter-evans/create-pull-request@v5
+        uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           commit-message: |
@@ -277,7 +288,7 @@ jobs:
           echo "=== Bearer CLI Version Check ==="
           
           # Get current version from Dockerfile
-          CURRENT=$(grep "BEARER_VERSION=" Dockerfile | cut -d'=' -f2 || echo "unknown")
+          CURRENT=$(grep "BEARER_VERSION=" Dockerfile | cut -d'=' -f2 || echo "${{ env.BEARER_VERSION }}")
           echo "Current version: ${CURRENT}"
           
           # Get latest version from GitHub releases
