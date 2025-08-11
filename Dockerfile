@@ -1,61 +1,112 @@
-# Production Dockerfile with all dependencies
-FROM python:3.11-slim
+# Multi-stage production Dockerfile with security best practices
+# Build stage - for downloading and preparing dependencies
+FROM python:3.11-slim AS builder
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
+# Build arguments
+ARG BEARER_VERSION=1.50.0
+ARG TARGETARCH=amd64
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
-    git \
     && rm -rf /var/lib/apt/lists/*
 
-# Download and install Bearer CLI with retry logic
-RUN curl -L --retry 5 --retry-delay 10 --max-time 300 \
-    -o /tmp/bearer.tar.gz \
-    "https://github.com/Bearer/bearer/releases/download/v1.50.0/bearer_1.50.0_linux_amd64.tar.gz" \
-    && tar -xzf /tmp/bearer.tar.gz -C /usr/local/bin/ \
-    && chmod +x /usr/local/bin/bearer \
-    && rm /tmp/bearer.tar.gz
+# Download Bearer CLI with architecture detection
+RUN ARCH_SUFFIX=$(case "${TARGETARCH}" in \
+        amd64) echo "linux_amd64" ;; \
+        arm64) echo "linux_arm64" ;; \
+        *) echo "linux_amd64" ;; \
+    esac) && \
+    curl -L --retry 5 --retry-delay 10 --max-time 300 \
+        -o /tmp/bearer.tar.gz \
+        "https://github.com/Bearer/bearer/releases/download/v${BEARER_VERSION}/bearer_${BEARER_VERSION}_${ARCH_SUFFIX}.tar.gz" && \
+    tar -xzf /tmp/bearer.tar.gz -C /tmp/ && \
+    chmod +x /tmp/bearer && \
+    rm /tmp/bearer.tar.gz
+
+# Create Python virtual environment and install dependencies
+WORKDIR /app
+COPY requirements.txt pyproject.toml ./
+
+# Create virtual environment and install dependencies
+RUN python -m venv /opt/venv && \
+    . /opt/venv/bin/activate && \
+    pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir -r requirements.txt
+
+# Runtime stage - minimal final image
+FROM python:3.11-slim AS runtime
+
+# Runtime build arguments for metadata
+ARG BEARER_VERSION=1.50.0
+ARG BUILD_DATE
+ARG VCS_REF
+ARG VERSION=1.0.1
+
+# Install minimal runtime dependencies including git for Bearer scanning
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    git \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Copy Bearer CLI from builder stage
+COPY --from=builder /tmp/bearer /usr/local/bin/bearer
+
+# Copy Python virtual environment from builder
+COPY --from=builder /opt/venv /opt/venv
+
+# Create non-root user with minimal privileges
+RUN groupadd -r -g 1000 mcpuser && \
+    useradd -r -g mcpuser -u 1000 -m -s /sbin/nologin mcpuser
+
+# Create necessary directories with proper ownership
+RUN mkdir -p /app /workspace /config && \
+    chown -R mcpuser:mcpuser /app /workspace /config
 
 # Set up application directory
 WORKDIR /app
 
-# Copy application files
-COPY pyproject.toml bearer_mcp_server.py ./
+# Copy application source code with proper ownership
+COPY --chown=mcpuser:mcpuser bearer_mcp_main.py ./
+COPY --chown=mcpuser:mcpuser bearer_mcp/ ./bearer_mcp/
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -e . && \
-    pip install --no-cache-dir fastapi>=0.104.0 uvicorn>=0.24.0
-
-# Create workspace directory
-RUN mkdir -p /workspace /config
-
-# Create non-root user for security
-RUN useradd -m -s /bin/bash mcpuser && \
-    chown -R mcpuser:mcpuser /app /workspace /config
-
-# Set environment variables
-ENV PYTHONUNBUFFERED=1
-ENV MCP_WORKING_DIRECTORY=/workspace
-ENV PYTHONPATH=/app
+# Environment variables for security and operation
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app \
+    PATH=/opt/venv/bin:$PATH \
+    MCP_WORKING_DIRECTORY=/workspace \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 
 # Switch to non-root user
 USER mcpuser
 
-# Health check to verify Bearer CLI works
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD bearer version > /dev/null || exit 1
+# Health check to verify both Python server and Bearer CLI work
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD python -c "import bearer_mcp; print('OK')" && bearer version > /dev/null || exit 1
 
-# Expose port for SSE transport
+# Expose port for SSE transport (non-privileged port)
 EXPOSE 8000
 
-# Run the MCP server
-CMD ["python", "bearer_mcp_server.py"]
+# Use exec form for proper signal handling
+CMD ["python", "bearer_mcp_main.py"]
 
-# Volume for scanning workspace
-VOLUME ["/workspace"]
+# Read-only root filesystem support - create necessary directories
+VOLUME ["/workspace", "/tmp"]
 
-# Metadata
-LABEL maintainer="Bearer MCP Server" \
-      description="MCP server that wraps the Bearer CLI security scanning tool" \
-      version="1.0.1" \
-      bearer.version="1.50.0"
+# Security and build metadata labels
+LABEL maintainer="Bearer MCP Server Team" \
+      org.opencontainers.image.title="Bearer MCP Server" \
+      org.opencontainers.image.description="MCP server that wraps the Bearer CLI security scanning tool" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
+      org.opencontainers.image.revision="${VCS_REF}" \
+      org.opencontainers.image.vendor="Bearer" \
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.source="https://github.com/Bearer/bearer-mcp-server" \
+      bearer.version="${BEARER_VERSION}" \
+      security.non-root="true" \
+      security.readonly-rootfs="supported"

@@ -1,0 +1,426 @@
+name: Security Compliance & Governance
+
+on:
+  schedule:
+    # Run compliance checks daily at 3 AM UTC
+    - cron: '0 3 * * *'
+  push:
+    branches: [main, master]
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+  issues: write
+  pull-requests: write
+  actions: read
+
+env:
+  COMPLIANCE_THRESHOLD: 85
+
+jobs:
+  policy-compliance:
+    name: Security Policy Compliance
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    
+    outputs:
+      compliance-score: ${{ steps.calculate-score.outputs.score }}
+      critical-findings: ${{ steps.calculate-score.outputs.critical-findings }}
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Security Policy Verification
+        id: policy-check
+        run: |
+          echo "=== Security Policy Compliance Check ==="
+          
+          SCORE=100
+          CRITICAL_FINDINGS=0
+          FINDINGS=""
+          
+          # Check 1: Dockerfile security best practices
+          echo "Checking Dockerfile security practices..."
+          if ! grep -q "USER.*mcpuser" Dockerfile; then
+            SCORE=$((SCORE - 15))
+            FINDINGS+=" - Missing non-root user execution\n"
+            ((CRITICAL_FINDINGS++))
+          fi
+          
+          if ! grep -q "HEALTHCHECK" Dockerfile; then
+            SCORE=$((SCORE - 10))
+            FINDINGS+=" - Missing health check\n"
+          fi
+          
+          if grep -q "latest" Dockerfile; then
+            SCORE=$((SCORE - 10))
+            FINDINGS+=" - Using 'latest' tag (should use specific versions)\n"
+          fi
+          
+          # Check 2: Secrets detection
+          echo "Checking for exposed secrets..."
+          if grep -r -E "(password|secret|key|token).*=.*['\"]" --include="*.py" --include="*.yml" --include="*.yaml" . 2>/dev/null | grep -v test; then
+            SCORE=$((SCORE - 25))
+            FINDINGS+=" - Potential hardcoded secrets detected\n"
+            ((CRITICAL_FINDINGS++))
+          fi
+          
+          # Check 3: Security workflows present
+          echo "Checking security workflows..."
+          if [ ! -f ".github/workflows/security.yml" ]; then
+            SCORE=$((SCORE - 15))
+            FINDINGS+=" - Missing security scanning workflow\n"
+          fi
+          
+          # Check 4: Dependency management
+          echo "Checking dependency management..."
+          if [ ! -f "requirements.txt" ] && [ ! -f "pyproject.toml" ]; then
+            SCORE=$((SCORE - 10))
+            FINDINGS+=" - Missing dependency management files\n"
+          fi
+          
+          # Check 5: Security documentation
+          if [ ! -f "SECURITY.md" ] && ! grep -q -i "security" README.md 2>/dev/null; then
+            SCORE=$((SCORE - 5))
+            FINDINGS+=" - Missing security documentation\n"
+          fi
+          
+          echo "Compliance Score: $SCORE/100"
+          echo "Critical Findings: $CRITICAL_FINDINGS"
+          
+          if [ -n "$FINDINGS" ]; then
+            echo "Findings:"
+            echo -e "$FINDINGS"
+          fi
+          
+          echo "score=$SCORE" >> $GITHUB_OUTPUT
+          echo "critical-findings=$CRITICAL_FINDINGS" >> $GITHUB_OUTPUT
+          echo "findings<<EOF" >> $GITHUB_OUTPUT
+          echo -e "$FINDINGS" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Calculate compliance score
+        id: calculate-score
+        run: |
+          echo "score=${{ steps.policy-check.outputs.score }}" >> $GITHUB_OUTPUT
+          echo "critical-findings=${{ steps.policy-check.outputs.critical-findings }}" >> $GITHUB_OUTPUT
+
+  sbom-generation:
+    name: Generate Software Bill of Materials
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies for SBOM
+        run: |
+          python -m pip install --upgrade pip
+          pip install cyclonedx-bom pip-audit
+          pip install -r requirements.txt
+
+      - name: Generate Python SBOM
+        run: |
+          echo "Generating Python SBOM..."
+          cyclonedx-py -o sbom-python.json
+          
+          # Generate requirements-based SBOM
+          pip-audit --format=cyclonedx --output=sbom-audit.json
+
+      - name: Set up Docker Buildx (for container SBOM)
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image for SBOM
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          tags: bearer-mcp:sbom
+          load: true
+          cache-from: type=gha
+
+      - name: Generate Container SBOM with Syft
+        uses: anchore/sbom-action@v0
+        with:
+          image: bearer-mcp:sbom
+          format: spdx-json
+          output-file: sbom-container.spdx.json
+
+      - name: Upload SBOM artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: sbom-files
+          path: |
+            sbom-*.json
+            sbom-*.spdx.json
+          retention-days: 90
+
+  supply-chain-security:
+    name: Supply Chain Security Analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install security analysis tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install pip-audit cyclonedx-bom safety osv-scanner
+          pip install -r requirements.txt
+
+      - name: Run pip-audit for vulnerability scanning
+        run: |
+          echo "=== pip-audit Vulnerability Scan ==="
+          pip-audit --format=json --output=pip-audit-report.json --require-hashes || true
+          
+          # Generate human-readable report
+          pip-audit --format=table || echo "Vulnerabilities found (see JSON report)"
+
+      - name: Run OSV Scanner
+        run: |
+          echo "=== OSV Scanner Analysis ==="
+          # Install osv-scanner
+          curl -L https://github.com/google/osv-scanner/releases/latest/download/osv-scanner_linux_amd64 -o osv-scanner
+          chmod +x osv-scanner
+          
+          # Scan the repository
+          ./osv-scanner --format=json --output=osv-report.json . || echo "OSV scan completed with findings"
+
+      - name: Dependency License Analysis
+        run: |
+          echo "=== License Compliance Check ==="
+          pip install pip-licenses
+          
+          # Generate license report
+          pip-licenses --format=json --output-file=licenses.json
+          
+          # Check for problematic licenses
+          PROBLEMATIC_LICENSES="GPL-3.0 AGPL-3.0 LGPL-3.0 LGPL-2.1"
+          
+          for license in $PROBLEMATIC_LICENSES; do
+            if pip-licenses | grep -i "$license"; then
+              echo "WARNING: Found potentially problematic license: $license"
+            fi
+          done
+
+      - name: Supply Chain Risk Assessment
+        run: |
+          echo "=== Supply Chain Risk Assessment ==="
+          
+          # Check for packages with few maintainers
+          python -c "
+          import json
+          import requests
+          import time
+          
+          with open('requirements.txt') as f:
+              packages = [line.strip().split('>=')[0] for line in f if line.strip() and not line.startswith('#')]
+          
+          high_risk_packages = []
+          
+          for package in packages:
+              try:
+                  response = requests.get(f'https://pypi.org/pypi/{package}/json', timeout=5)
+                  if response.status_code == 200:
+                      data = response.json()
+                      maintainers = len(data.get('info', {}).get('maintainer_email', '').split(',') if data.get('info', {}).get('maintainer_email') else [])
+                      if maintainers < 2:
+                          high_risk_packages.append(package)
+                  time.sleep(0.5)  # Rate limiting
+              except Exception as e:
+                  print(f'Error checking {package}: {e}')
+          
+          if high_risk_packages:
+              print('High-risk packages (few maintainers):')
+              for pkg in high_risk_packages:
+                  print(f'  - {pkg}')
+          else:
+              print('No high-risk packages detected')
+          "
+
+      - name: Upload security reports
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: supply-chain-reports
+          path: |
+            pip-audit-report.json
+            osv-report.json
+            licenses.json
+          retention-days: 30
+
+  governance-check:
+    name: Repository Governance Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check repository settings and governance
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            
+            console.log('=== Repository Governance Check ===');
+            
+            // Get repository information
+            const repoInfo = await github.rest.repos.get({ owner, repo });
+            
+            let governanceScore = 100;
+            const findings = [];
+            
+            // Check if branch protection is enabled
+            try {
+              const branchProtection = await github.rest.repos.getBranchProtection({
+                owner,
+                repo,
+                branch: repoInfo.data.default_branch
+              });
+              console.log('✅ Branch protection is enabled');
+            } catch (error) {
+              console.log('⚠️ Branch protection is not enabled');
+              governanceScore -= 20;
+              findings.push('Branch protection not enabled on default branch');
+            }
+            
+            // Check for security policy
+            try {
+              await github.rest.repos.getContent({ owner, repo, path: 'SECURITY.md' });
+              console.log('✅ Security policy file exists');
+            } catch (error) {
+              console.log('⚠️ No SECURITY.md file found');
+              governanceScore -= 10;
+              findings.push('Missing SECURITY.md file');
+            }
+            
+            // Check repository settings
+            if (!repoInfo.data.has_vulnerability_alerts) {
+              console.log('⚠️ Vulnerability alerts not enabled');
+              governanceScore -= 15;
+              findings.push('Vulnerability alerts not enabled');
+            }
+            
+            if (!repoInfo.data.security_and_analysis?.secret_scanning?.status === 'enabled') {
+              console.log('⚠️ Secret scanning not enabled');
+              governanceScore -= 15;
+              findings.push('Secret scanning not enabled');
+            }
+            
+            console.log(`Governance Score: ${governanceScore}/100`);
+            
+            if (findings.length > 0) {
+              console.log('Governance Findings:');
+              findings.forEach(finding => console.log(`  - ${finding}`));
+            }
+            
+            core.setOutput('governance-score', governanceScore);
+            core.setOutput('governance-findings', findings.join('\n'));
+
+  compliance-summary:
+    name: Compliance Summary Report
+    runs-on: ubuntu-latest
+    needs: [policy-compliance, sbom-generation, supply-chain-security, governance-check]
+    if: always()
+    
+    steps:
+      - name: Generate compliance report
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const policyScore = '${{ needs.policy-compliance.outputs.compliance-score }}' || '0';
+            const criticalFindings = '${{ needs.policy-compliance.outputs.critical-findings }}' || '0';
+            const governanceScore = '${{ needs.governance-check.outputs.governance-score }}' || '0';
+            
+            const overallScore = Math.round((parseInt(policyScore) + parseInt(governanceScore)) / 2);
+            const threshold = parseInt('${{ env.COMPLIANCE_THRESHOLD }}');
+            
+            console.log('=== Security Compliance Summary ===');
+            console.log(`Policy Compliance Score: ${policyScore}/100`);
+            console.log(`Governance Score: ${governanceScore}/100`);
+            console.log(`Overall Compliance Score: ${overallScore}/100`);
+            console.log(`Critical Findings: ${criticalFindings}`);
+            console.log(`Compliance Threshold: ${threshold}/100`);
+            console.log('');
+            
+            if (overallScore >= threshold && parseInt(criticalFindings) === 0) {
+              console.log('✅ COMPLIANCE STATUS: PASSED');
+              console.log('Repository meets security compliance requirements.');
+            } else {
+              console.log('❌ COMPLIANCE STATUS: FAILED');
+              console.log('Repository does not meet security compliance requirements.');
+              
+              if (overallScore < threshold) {
+                console.log(`Score ${overallScore} is below threshold ${threshold}`);
+              }
+              
+              if (parseInt(criticalFindings) > 0) {
+                console.log(`${criticalFindings} critical security findings must be resolved`);
+              }
+            }
+            
+            // Set outputs for potential follow-up actions
+            core.setOutput('compliance-status', overallScore >= threshold && parseInt(criticalFindings) === 0 ? 'PASSED' : 'FAILED');
+            core.setOutput('overall-score', overallScore);
+
+      - name: Create compliance issue (if failed)
+        if: needs.policy-compliance.outputs.critical-findings != '0' || needs.policy-compliance.outputs.compliance-score < env.COMPLIANCE_THRESHOLD
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const criticalFindings = '${{ needs.policy-compliance.outputs.critical-findings }}';
+            const complianceScore = '${{ needs.policy-compliance.outputs.compliance-score }}';
+            
+            const issueBody = `## 🚨 Security Compliance Failure
+            
+            The automated security compliance check has identified critical issues that require immediate attention.
+            
+            **Compliance Score:** ${complianceScore}/100 (Threshold: ${{ env.COMPLIANCE_THRESHOLD }}/100)
+            **Critical Findings:** ${criticalFindings}
+            
+            ### Required Actions
+            
+            Please review the [compliance workflow results](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) and address all critical security findings.
+            
+            ### Compliance Requirements
+            
+            - [ ] All critical security findings resolved
+            - [ ] Compliance score above threshold (${{ env.COMPLIANCE_THRESHOLD }}/100)
+            - [ ] Security policies implemented
+            - [ ] Repository governance configured
+            
+            ---
+            
+            This issue was automatically created by the security compliance workflow.
+            **Workflow Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
+            
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `🚨 Security Compliance Failure - Score: ${complianceScore}/100`,
+              body: issueBody,
+              labels: ['security', 'compliance', 'high-priority', 'automated']
+            });
+            
+            console.log('Created compliance failure issue');

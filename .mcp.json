@@ -6,9 +6,9 @@
         "run",
         "--rm",
         "-i",
-        "-v", ".:/workspace:rw",
+        "-v", ".:/workspace:ro",
         "bearer-mcp:latest",
-        "python", "bearer_mcp_server.py"
+        "python", "bearer_mcp_main.py"
       ],
       "env": {
         "MCP_WORKING_DIRECTORY": "/workspace"

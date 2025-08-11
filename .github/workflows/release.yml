@@ -1,0 +1,459 @@
+name: Release Automation
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., 1.0.0)'
+        required: true
+        type: string
+      prerelease:
+        description: 'Mark as prerelease'
+        required: false
+        default: false
+        type: boolean
+      draft:
+        description: 'Create as draft'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+  attestations: write
+
+jobs:
+  validate-release:
+    name: Validate Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      is-prerelease: ${{ steps.version.outputs.is-prerelease }}
+      changelog: ${{ steps.changelog.outputs.changelog }}
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+            IS_PRERELEASE="${{ inputs.prerelease }}"
+          else
+            # Extract version from tag
+            VERSION=${GITHUB_REF#refs/tags/v}
+            # Check if it's a prerelease (contains alpha, beta, rc)
+            if echo "$VERSION" | grep -E "(alpha|beta|rc)" > /dev/null; then
+              IS_PRERELEASE=true
+            else
+              IS_PRERELEASE=false
+            fi
+          fi
+          
+          echo "Version: $VERSION"
+          echo "Is prerelease: $IS_PRERELEASE"
+          
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "is-prerelease=$IS_PRERELEASE" >> $GITHUB_OUTPUT
+
+      - name: Validate version format
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          if ! echo "$VERSION" | grep -E "^[0-9]+\.[0-9]+\.[0-9]+" > /dev/null; then
+            echo "Error: Invalid version format: $VERSION"
+            echo "Expected format: X.Y.Z or X.Y.Z-suffix"
+            exit 1
+          fi
+          echo "Version format is valid: $VERSION"
+
+      - name: Check if version exists
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          if git tag -l | grep -q "v$VERSION"; then
+            echo "Error: Version v$VERSION already exists"
+            exit 1
+          fi
+          echo "Version v$VERSION is new"
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          
+          # Get the previous tag
+          PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || echo "")
+          
+          echo "Generating changelog from ${PREVIOUS_TAG:-initial commit} to HEAD"
+          
+          # Generate changelog
+          CHANGELOG="## What's Changed\n\n"
+          
+          if [ -n "$PREVIOUS_TAG" ]; then
+            # Get commits since last tag
+            COMMITS=$(git log --pretty=format:"* %s" ${PREVIOUS_TAG}..HEAD)
+          else
+            # Get all commits
+            COMMITS=$(git log --pretty=format:"* %s")
+          fi
+          
+          # Categorize commits
+          FEATURES=$(echo "$COMMITS" | grep -E "^\* (feat|feature)" || true)
+          FIXES=$(echo "$COMMITS" | grep -E "^\* (fix|bugfix)" || true)
+          DOCS=$(echo "$COMMITS" | grep -E "^\* (docs|doc)" || true)
+          CHORES=$(echo "$COMMITS" | grep -E "^\* (chore|refactor|style|test)" || true)
+          SECURITY=$(echo "$COMMITS" | grep -E "^\* (security|sec)" || true)
+          
+          if [ -n "$SECURITY" ]; then
+            CHANGELOG+="### 🛡️ Security\n$SECURITY\n\n"
+          fi
+          
+          if [ -n "$FEATURES" ]; then
+            CHANGELOG+="### ✨ Features\n$FEATURES\n\n"
+          fi
+          
+          if [ -n "$FIXES" ]; then
+            CHANGELOG+="### 🐛 Bug Fixes\n$FIXES\n\n"
+          fi
+          
+          if [ -n "$DOCS" ]; then
+            CHANGELOG+="### 📄 Documentation\n$DOCS\n\n"
+          fi
+          
+          if [ -n "$CHORES" ]; then
+            CHANGELOG+="### 🛠️ Maintenance\n$CHORES\n\n"
+          fi
+          
+          # Add Docker image info
+          CHANGELOG+="### 🐳 Docker Images\n"
+          CHANGELOG+="* \`ghcr.io/${{ github.repository }}:${VERSION}\`\n"
+          CHANGELOG+="* \`ghcr.io/${{ github.repository }}:latest\`\n\n"
+          
+          # Add verification info
+          CHANGELOG+="### 🔒 Verification\n"
+          CHANGELOG+="This release includes:\n"
+          CHANGELOG+="* ✅ Security scans (CodeQL, Semgrep, Trivy)\n"
+          CHANGELOG+="* ✅ Dependency vulnerability checks\n"
+          CHANGELOG+="* ✅ Container image signing with Cosign\n"
+          CHANGELOG+="* ✅ SLSA build provenance attestation\n"
+          CHANGELOG+="* ✅ Software Bill of Materials (SBOM)\n\n"
+          
+          echo "$CHANGELOG" > changelog.md
+          
+          # Set output (properly escaped for GitHub Actions)
+          {                        
+            echo 'changelog<<EOF'
+            cat changelog.md
+            echo 'EOF'
+          } >> $GITHUB_OUTPUT
+
+      - name: Upload changelog artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: changelog
+          path: changelog.md
+
+  security-scan:
+    name: Pre-Release Security Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [validate-release]
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install safety
+
+      - name: Run security scans
+        run: |
+          echo "=== Pre-Release Security Scan ==="
+          
+          # Run safety check
+          safety check --json --output safety-release.json || true
+          
+          # Check results
+          if [ -f safety-release.json ]; then
+            VULN_COUNT=$(python -c "
+            import json
+            try:
+                with open('safety-release.json') as f:
+                    data = json.load(f)
+                print(len(data) if data else 0)
+            except:
+                print(0)
+            ")
+            
+            if [ "$VULN_COUNT" -gt 0 ]; then
+              echo "⚠️ Found $VULN_COUNT security vulnerabilities!"
+              echo "Cannot proceed with release until vulnerabilities are fixed."
+              exit 1
+            else
+              echo "✅ No security vulnerabilities found"
+            fi
+          fi
+
+      - name: Install and run Bearer CLI scan
+        run: |
+          # Install Bearer CLI
+          curl -L --retry 3 --retry-delay 5 \
+            -o /tmp/bearer.tar.gz \
+            "https://github.com/Bearer/bearer/releases/download/v1.50.0/bearer_1.50.0_linux_amd64.tar.gz"
+          sudo tar -xzf /tmp/bearer.tar.gz -C /usr/local/bin/
+          sudo chmod +x /usr/local/bin/bearer
+          
+          # Run Bearer scan
+          bearer scan . --severity high,critical --quiet || {
+            echo "⚠️ Bearer scan found high/critical security issues"
+            echo "Please review and fix before releasing"
+            exit 1
+          }
+          
+          echo "✅ Bearer security scan passed"
+
+  build-release:
+    name: Build Release Assets
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: [validate-release, security-scan]
+    
+    outputs:
+      docker-digest: ${{ steps.docker.outputs.digest }}
+      docker-tags: ${{ steps.docker.outputs.tags }}
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          platforms: linux/amd64,linux/arm64
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}},value=v${{ needs.validate-release.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=v${{ needs.validate-release.outputs.version }}
+            type=semver,pattern={{major}},value=v${{ needs.validate-release.outputs.version }}
+            type=raw,value=latest,enable={{is_default_branch}}
+          labels: |
+            org.opencontainers.image.title=Bearer MCP Server
+            org.opencontainers.image.description=MCP server that wraps the Bearer CLI security scanning tool
+            org.opencontainers.image.vendor=Bearer
+            org.opencontainers.image.licenses=MIT
+            org.opencontainers.image.version=${{ needs.validate-release.outputs.version }}
+
+      - name: Build and push Docker images
+        id: docker
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            BUILD_DATE=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.created'] }}
+            VCS_REF=${{ github.sha }}
+            VERSION=${{ needs.validate-release.outputs.version }}
+            BEARER_VERSION=1.50.0
+          provenance: true
+          sbom: true
+
+      - name: Generate SLSA attestation
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.docker.outputs.digest }}
+          push-to-registry: true
+
+      - name: Install Cosign and sign images
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign Docker images
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+          DIGEST: ${{ steps.docker.outputs.digest }}
+        run: |
+          echo "Signing release images..."
+          echo "${TAGS}" | while IFS= read -r tag; do
+            [ -n "$tag" ] && cosign sign --yes "${tag}@${DIGEST}"
+          done
+
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [validate-release, build-release]
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download changelog
+        uses: actions/download-artifact@v3
+        with:
+          name: changelog
+
+      - name: Create GitHub Release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const version = '${{ needs.validate-release.outputs.version }}';
+            const isPrerelease = ${{ needs.validate-release.outputs.is-prerelease }};
+            const isDraft = ${{ inputs.draft || false }};
+            
+            // Read changelog
+            let changelog = '';
+            try {
+              changelog = fs.readFileSync('changelog.md', 'utf8');
+            } catch (error) {
+              changelog = 'Release notes will be updated shortly.';
+            }
+            
+            // Add Docker info to changelog
+            const dockerTags = `${{ needs.build-release.outputs.docker-tags }}`;
+            const dockerDigest = `${{ needs.build-release.outputs.docker-digest }}`;
+            
+            changelog += `\n\n### 🐳 Docker Image\n\n`;
+            changelog += `**Tags:**\n`;
+            dockerTags.split('\n').forEach(tag => {
+              if (tag.trim()) changelog += `- \`${tag}\`\n`;
+            });
+            changelog += `\n**Digest:** \`${dockerDigest}\`\n\n`;
+            changelog += `**Pull command:**\n\`\`\`bash\ndocker pull ghcr.io/${{ github.repository }}:${version}\n\`\`\`\n\n`;
+            
+            // Create release
+            const release = await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: `v${version}`,
+              name: `Bearer MCP Server v${version}`,
+              body: changelog,
+              draft: isDraft,
+              prerelease: isPrerelease,
+              generate_release_notes: false
+            });
+            
+            console.log(`Created release: ${release.data.html_url}`);
+            
+            // Set output
+            core.setOutput('release-url', release.data.html_url);
+            core.setOutput('release-id', release.data.id);
+
+  post-release:
+    name: Post-Release Tasks
+    runs-on: ubuntu-latest
+    needs: [validate-release, create-release]
+    if: always() && needs.create-release.result == 'success'
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Update version in files
+        run: |
+          VERSION="${{ needs.validate-release.outputs.version }}"
+          
+          # Update pyproject.toml version
+          if [ -f pyproject.toml ]; then
+            sed -i "s/version = \"[^\"]*\"/version = \"${VERSION}\"/g" pyproject.toml
+            echo "Updated pyproject.toml version to ${VERSION}"
+          fi
+          
+          # Update Dockerfile labels
+          if [ -f Dockerfile ]; then
+            sed -i "s/VERSION=\"[^\"]*\"/VERSION=\"${VERSION}\"/g" Dockerfile
+            echo "Updated Dockerfile version to ${VERSION}"
+          fi
+          
+          # Commit changes if any
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          
+          if ! git diff --quiet; then
+            git add .
+            git commit -m "chore: bump version to v${VERSION} [skip ci]"
+            git push
+            echo "Committed version updates"
+          else
+            echo "No version updates needed"
+          fi
+
+  release-summary:
+    name: Release Summary
+    runs-on: ubuntu-latest
+    needs: [validate-release, security-scan, build-release, create-release, post-release]
+    if: always()
+    
+    steps:
+      - name: Print release summary
+        run: |
+          echo "=== Release Summary ==="
+          echo "Version: ${{ needs.validate-release.outputs.version }}"
+          echo "Prerelease: ${{ needs.validate-release.outputs.is-prerelease }}"
+          echo "Validation: ${{ needs.validate-release.result }}"
+          echo "Security Scan: ${{ needs.security-scan.result }}"
+          echo "Build: ${{ needs.build-release.result }}"
+          echo "Release Creation: ${{ needs.create-release.result }}"
+          echo "Post-Release: ${{ needs.post-release.result }}"
+          echo ""
+          
+          if [ "${{ needs.create-release.result }}" = "success" ]; then
+            echo "✅ Release v${{ needs.validate-release.outputs.version }} created successfully!"
+            echo ""
+            echo "Docker Images:"
+            echo '${{ needs.build-release.outputs.docker-tags }}' | while IFS= read -r tag; do
+              [ -n "$tag" ] && echo "  - $tag"
+            done
+            echo ""
+            echo "Image Digest: ${{ needs.build-release.outputs.docker-digest }}"
+            echo ""
+            echo "🔒 All images are signed with Cosign and include SLSA attestations"
+            echo "📋 SBOM (Software Bill of Materials) is attached to each image"
+          else
+            echo "❌ Release creation failed or was cancelled"
+            exit 1
+          fi

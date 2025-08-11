@@ -1,0 +1,22 @@
+{
+  "mcpServers": {
+    "bearer-mcp-sse": {
+      "command": "docker",
+      "args": [
+        "run",
+        "--rm",
+        "-d",
+        "--name", "bearer-mcp-sse",
+        "-p", "8000:8000",
+        "-v", ".:/workspace:ro",
+        "-e", "MCP_TRANSPORT=sse",
+        "-e", "MCP_SSE_HOST=0.0.0.0",
+        "-e", "MCP_SSE_PORT=8000",
+        "-e", "MCP_WORKING_DIRECTORY=/workspace",
+        "bearer-mcp:latest"
+      ],
+      "name": "Bearer Security Scanner (SSE)",
+      "description": "MCP server for Bearer CLI security scanning tool running in Docker with SSE transport"
+    }
+  }
+}

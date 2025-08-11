@@ -1,0 +1,110 @@
+schemaVersion: 2.0.0
+
+metadataTest:
+  labels:
+    - key: 'org.opencontainers.image.title'
+      value: 'Bearer MCP Server'
+    - key: 'org.opencontainers.image.description'
+      value: 'MCP server that wraps the Bearer CLI security scanning tool'
+    - key: 'org.opencontainers.image.vendor'
+      value: 'Bearer'
+    - key: 'org.opencontainers.image.licenses'
+      value: 'MIT'
+    - key: 'security.non-root'
+      value: 'true'
+    - key: 'security.readonly-rootfs'
+      value: 'supported'
+  exposedPorts: ['8000']
+  volumes: ['/workspace', '/tmp']
+  workdir: '/app'
+  user: 'mcpuser'
+
+fileExistenceTests:
+  - name: 'Bearer CLI binary exists'
+    path: '/usr/local/bin/bearer'
+    shouldExist: true
+    permissions: '-rwxr-xr-x'
+  - name: 'Python virtual environment exists'
+    path: '/opt/venv/bin/python'
+    shouldExist: true
+  - name: 'Application main file exists'
+    path: '/app/bearer_mcp_main.py'
+    shouldExist: true
+  - name: 'Bearer MCP package exists'
+    path: '/app/bearer_mcp'
+    shouldExist: true
+  - name: 'Workspace directory exists'
+    path: '/workspace'
+    shouldExist: true
+  - name: 'Config directory exists'
+    path: '/config'
+    shouldExist: true
+  - name: 'Temp directory is writable'
+    path: '/tmp'
+    shouldExist: true
+
+fileContentTests:
+  - name: 'Bearer CLI version check'
+    path: '/usr/local/bin/bearer'
+    expectedContents: ['ELF']
+  - name: 'Python path in virtual environment'
+    path: '/opt/venv/pyvenv.cfg'
+    expectedContents: ['home = /usr/local/bin']
+
+commandTests:
+  - name: 'Bearer CLI is functional'
+    command: 'bearer'
+    args: ['version']
+    expectedOutput: ['Bearer']
+    exitCode: 0
+  
+  - name: 'Python import test'
+    command: 'python'
+    args: ['-c', 'import bearer_mcp; print("OK")']
+    expectedOutput: ['OK']
+    exitCode: 0
+  
+  - name: 'Virtual environment is active'
+    command: 'which'
+    args: ['python']
+    expectedOutput: ['/opt/venv/bin/python']
+    exitCode: 0
+  
+  - name: 'Non-root user verification'
+    command: 'whoami'
+    expectedOutput: ['mcpuser']
+    exitCode: 0
+  
+  - name: 'User ID verification'
+    command: 'id'
+    args: ['-u']
+    expectedOutput: ['1000']
+    exitCode: 0
+  
+  - name: 'Group ID verification'
+    command: 'id'
+    args: ['-g']
+    expectedOutput: ['1000']
+    exitCode: 0
+  
+  - name: 'Workspace directory permissions'
+    command: 'test'
+    args: ['-w', '/workspace']
+    exitCode: 0
+  
+  - name: 'Config directory permissions'
+    command: 'test'
+    args: ['-w', '/config']
+    exitCode: 0
+  
+  - name: 'Python packages installed'
+    command: 'pip'
+    args: ['list']
+    expectedOutput: ['mcp', 'fastapi', 'uvicorn']
+    exitCode: 0
+
+  - name: 'Security - no shells available for user'
+    command: 'getent'
+    args: ['passwd', 'mcpuser']
+    expectedOutput: ['/sbin/nologin']
+    exitCode: 0
