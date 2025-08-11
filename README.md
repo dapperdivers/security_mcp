@@ -19,37 +19,10 @@ Bearer is a static application security testing (SAST) tool that scans source co
 
 ### Prerequisites
 
-- Python 3.10 or higher
-- Bearer CLI (installed automatically in Docker version)
+- Docker and Docker Compose
+- Python 3.10 or higher (for MCP client integration)
 
-### Option 1: Local Installation
-
-1. **Clone the repository**:
-   ```bash
-   git clone https://github.com/yourusername/bearer-mcp-server.git
-   cd bearer-mcp-server
-   ```
-
-2. **Install Bearer CLI**:
-   ```bash
-   # macOS/Linux
-   curl -sfL https://raw.githubusercontent.com/Bearer/bearer/main/contrib/install.sh | sh
-   
-   # Or using Homebrew (macOS)
-   brew install bearer/tap/bearer
-   ```
-
-3. **Install Python dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. **Install the MCP Server**:
-   ```bash
-   pip install -e .
-   ```
-
-### Option 2: Docker Installation (Recommended)
+### Docker Installation
 
 1. **Clone the repository**:
    ```bash
