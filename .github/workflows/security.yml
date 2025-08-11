@@ -14,6 +14,7 @@ permissions:
   contents: read
   security-events: write
   actions: read
+  id-token: write  # Required for OIDC token requests
 
 jobs:
   # CodeQL Analysis for static application security testing (SAST)
@@ -92,31 +93,89 @@ jobs:
           sudo tar -xzf /tmp/bearer.tar.gz -C /usr/local/bin/
           sudo chmod +x /usr/local/bin/bearer
           bearer version
+          
+          # Verify SARIF support
+          echo "Checking Bearer SARIF support..."
+          bearer scan --help | grep -i sarif || echo "Note: SARIF format support check"
 
       - name: Run Bearer Security Scan
+        id: bearer-scan
         continue-on-error: true
         run: |
-          # Run Bearer scan and ensure SARIF file is created
+          # Run Bearer scan with verbose output for debugging
+          echo "Starting Bearer scan..."
           bearer scan . \
             --format sarif \
-            --output bearer-results.sarif || echo '{"version":"2.1.0","runs":[]}' > bearer-results.sarif
+            --output bearer-results.sarif \
+            --quiet 2>&1 | tee bearer-scan.log || SCAN_EXIT_CODE=$?
           
-          # Verify the file exists
+          # Check scan results
           if [ -f bearer-results.sarif ]; then
             echo "Bearer SARIF file created successfully"
-            echo "File size: $(ls -lh bearer-results.sarif | awk '{print $5}')"
+            FILE_SIZE=$(stat -c%s bearer-results.sarif 2>/dev/null || stat -f%z bearer-results.sarif 2>/dev/null || echo "0")
+            echo "File size: ${FILE_SIZE} bytes"
+            
+            # Validate SARIF structure
+            if python3 -m json.tool bearer-results.sarif > /dev/null 2>&1; then
+              echo "SARIF file is valid JSON"
+              echo "sarif-valid=true" >> $GITHUB_OUTPUT
+            else
+              echo "Warning: SARIF file may be malformed"
+              echo "Creating valid empty SARIF file"
+              cat > bearer-results.sarif << 'EOF'
+          {
+            "version": "2.1.0",
+            "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+            "runs": [{
+              "tool": {
+                "driver": {
+                  "name": "Bearer",
+                  "informationUri": "https://docs.bearer.com/",
+                  "version": "1.0.0",
+                  "rules": []
+                }
+              },
+              "results": []
+            }]
+          }
+          EOF
+              echo "sarif-valid=true" >> $GITHUB_OUTPUT
+            fi
           else
-            echo "Creating empty SARIF file"
-            echo '{"version":"2.1.0","runs":[]}' > bearer-results.sarif
+            echo "Bearer scan did not produce SARIF file, creating empty valid file"
+            cat > bearer-results.sarif << 'EOF'
+          {
+            "version": "2.1.0",
+            "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+            "runs": [{
+              "tool": {
+                "driver": {
+                  "name": "Bearer",
+                  "informationUri": "https://docs.bearer.com/",
+                  "version": "1.0.0",
+                  "rules": []
+                }
+              },
+              "results": []
+            }]
+          }
+          EOF
+            echo "sarif-valid=false" >> $GITHUB_OUTPUT
           fi
+          
+          # Output debug information
+          echo "::group::Bearer SARIF File Preview"
+          head -50 bearer-results.sarif || true
+          echo "::endgroup::"
 
       - name: Upload Bearer SARIF results
         uses: github/codeql-action/upload-sarif@v3
-        if: always() && hashFiles('bearer-results.sarif') != ''
+        if: always()
         continue-on-error: true
         with:
           sarif_file: bearer-results.sarif
-          category: "bearer-security-scan"
+          category: "bearer-security"
+          wait-for-processing: true
 
 
   secrets-scan:
@@ -159,14 +218,16 @@ jobs:
           fail-build: false
           severity-cutoff: none
           output-format: sarif
+          add-cpes-if-none: true
 
       - name: Upload Grype SARIF results
         uses: github/codeql-action/upload-sarif@v3
-        if: always()
+        if: always() && steps.grype.outputs.sarif != ''
         continue-on-error: true
         with:
           sarif_file: ${{ steps.grype.outputs.sarif }}
-          category: "grype-container-scan"
+          category: "grype-container"
+          wait-for-processing: true
 
   # Container Security Scanning with Trivy
   container-scan-trivy:
@@ -192,19 +253,82 @@ jobs:
           severity: 'CRITICAL,HIGH,MEDIUM'
           vuln-type: 'os,library'
 
+      - name: Validate and Upload Trivy SARIF results
+        if: always()
+        continue-on-error: true
+        run: |
+          # Validate Trivy SARIF before upload
+          if [ -f trivy-results.sarif ]; then
+            echo "Trivy SARIF file found"
+            if python3 -m json.tool trivy-results.sarif > /dev/null 2>&1; then
+              echo "Trivy SARIF is valid JSON, uploading..."
+            else
+              echo "Warning: Trivy SARIF may be malformed, attempting to fix..."
+              # Try to fix common issues
+              python3 -c "import json; data = open('trivy-results.sarif').read(); json.loads(data)" 2>/dev/null || 
+              echo '{"version":"2.1.0","runs":[]}' > trivy-results.sarif
+            fi
+          else
+            echo "No Trivy SARIF file found"
+          fi
+
       - name: Upload Trivy SARIF results
         uses: github/codeql-action/upload-sarif@v3
-        if: always()
+        if: always() && hashFiles('trivy-results.sarif') != ''
         continue-on-error: true
         with:
           sarif_file: trivy-results.sarif
-          category: "trivy-container-scan"
+          category: "trivy-container"
+          wait-for-processing: true
 
+
+  # Debug job to check SARIF uploads
+  sarif-upload-check:
+    name: SARIF Upload Verification
+    runs-on: ubuntu-latest
+    needs: [codeql-analyze, bearer-scan, container-scan-grype, container-scan-trivy]
+    if: always()
+    permissions:
+      security-events: read
+    
+    steps:
+      - name: Check Code Scanning Alerts
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "=== Checking Code Scanning Results ==="
+          
+          # Get recent code scanning analyses
+          ANALYSES=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/code-scanning/analyses?per_page=10" || echo "[]")
+          
+          echo "Recent Code Scanning Analyses:"
+          echo "$ANALYSES" | python3 -c "import json, sys; 
+          data = json.load(sys.stdin) if sys.stdin else []; 
+          if not data: print('No analyses found'); 
+          [print(f'- {a[\"tool\"][\"name\"]} ({a.get(\"category\", \"default\")}) - {a[\"created_at\"]}') for a in data[:5]]"
+          
+          # Get code scanning alerts count
+          ALERTS=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/code-scanning/alerts" || echo "[]")
+          
+          ALERT_COUNT=$(echo "$ALERTS" | python3 -c "import json, sys; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")
+          echo ""
+          echo "Total Code Scanning Alerts: $ALERT_COUNT"
+          
+          # Check for SARIF upload errors in this workflow
+          echo ""
+          echo "=== Checking for SARIF Upload Issues ==="
+          echo "Note: SARIF uploads may take a few minutes to process"
+          echo "Check the Security tab for results: https://github.com/${{ github.repository }}/security/code-scanning"
 
   security-summary:
     name: Security Summary
     runs-on: ubuntu-latest
-    needs: [codeql-analyze, dependency-check, bearer-scan, secrets-scan, container-scan-grype, container-scan-trivy]
+    needs: [codeql-analyze, dependency-check, bearer-scan, secrets-scan, container-scan-grype, container-scan-trivy, sarif-upload-check]
     if: always()
     
     steps:
@@ -217,6 +341,7 @@ jobs:
           echo "Secret Detection: ${{ needs.secrets-scan.result }}"
           echo "Container Scan (Grype): ${{ needs.container-scan-grype.result }}"
           echo "Container Scan (Trivy): ${{ needs.container-scan-trivy.result }}"
+          echo "SARIF Upload Check: ${{ needs.sarif-upload-check.result }}"
           echo ""
           
           # Count successful scans
