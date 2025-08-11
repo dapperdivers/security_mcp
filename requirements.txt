@@ -8,3 +8,4 @@ sse-starlette>=1.6.0
 # Security and compatibility
 certifi>=2023.7.22  # Updated certificates
 requests>=2.31.0    # HTTP client with security fixes
+setuptools>=70.0.0  # Fix for CVE-2025-63853 and GHSA-cx63-2mw6-8hw5

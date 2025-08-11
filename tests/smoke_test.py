@@ -3,7 +3,6 @@
 Smoke test to verify the MCP server can import and initialize properly
 """
 
-import os
 import sys
 
 

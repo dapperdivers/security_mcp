@@ -1,6 +1,6 @@
 # Multi-stage production Dockerfile with security best practices
 # Build stage - for downloading and preparing dependencies
-FROM python:3.11-slim AS builder
+FROM python:3.11-slim-bookworm AS builder
 
 # Build arguments
 ARG TARGETARCH=amd64
@@ -34,7 +34,7 @@ RUN python -m venv /opt/venv && \
     pip install --no-cache-dir -r requirements.txt
 
 # Runtime stage - minimal final image
-FROM python:3.11-slim AS runtime
+FROM python:3.11-slim-bookworm AS runtime
 
 # Runtime build arguments for metadata
 ARG BUILD_DATE
@@ -42,7 +42,10 @@ ARG VCS_REF
 ARG VERSION=1.0.1
 
 # Install minimal runtime dependencies including git for Bearer scanning
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Update all packages to latest security patches
+RUN apt-get update && \
+    apt-get upgrade -y && \
+    apt-get install -y --no-install-recommends \
     ca-certificates \
     git \
     && rm -rf /var/lib/apt/lists/* \
