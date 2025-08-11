@@ -79,109 +79,36 @@ jobs:
     name: Bearer Security Scan
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
+      security-events: write
     
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install Bearer CLI
-        run: |
-          BEARER_VERSION=$(curl -s https://api.github.com/repos/Bearer/bearer/releases/latest | grep '"tag_name":' | sed -E 's/.*"v([^"]+)".*/\1/')
-          echo "Installing Bearer v${BEARER_VERSION}"
-          curl -L -o /tmp/bearer.tar.gz \
-            "https://github.com/Bearer/bearer/releases/download/v${BEARER_VERSION}/bearer_${BEARER_VERSION}_linux_amd64.tar.gz"
-          sudo tar -xzf /tmp/bearer.tar.gz -C /usr/local/bin/
-          sudo chmod +x /usr/local/bin/bearer
-          bearer version
-          
-          # Verify SARIF support
-          echo "Checking Bearer SARIF support..."
-          bearer scan --help | grep -i sarif || echo "Note: SARIF format support check"
-
       - name: Run Bearer Security Scan
-        id: bearer-scan
-        continue-on-error: true
-        run: |
-          # Run Bearer scan with verbose output for debugging
-          echo "Starting Bearer scan..."
-          bearer scan . \
-            --format sarif \
-            --output bearer-results.sarif \
-            --quiet 2>&1 | tee bearer-scan.log || SCAN_EXIT_CODE=$?
-          
-          # Check scan results
-          if [ -f bearer-results.sarif ]; then
-            echo "Bearer SARIF file created successfully"
-            FILE_SIZE=$(stat -c%s bearer-results.sarif 2>/dev/null || stat -f%z bearer-results.sarif 2>/dev/null || echo "0")
-            echo "File size: ${FILE_SIZE} bytes"
-            
-            # Validate SARIF structure
-            if python3 -m json.tool bearer-results.sarif > /dev/null 2>&1; then
-              echo "SARIF file is valid JSON"
-              echo "sarif-valid=true" >> $GITHUB_OUTPUT
-            else
-              echo "Warning: SARIF file may be malformed"
-              echo "Creating valid empty SARIF file"
-              cat > bearer-results.sarif << 'EOF'
-          {
-            "version": "2.1.0",
-            "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
-            "runs": [{
-              "tool": {
-                "driver": {
-                  "name": "Bearer",
-                  "informationUri": "https://docs.bearer.com/",
-                  "version": "1.0.0",
-                  "rules": []
-                }
-              },
-              "results": []
-            }]
-          }
-          EOF
-              echo "sarif-valid=true" >> $GITHUB_OUTPUT
-            fi
-          else
-            echo "Bearer scan did not produce SARIF file, creating empty valid file"
-            cat > bearer-results.sarif << 'EOF'
-          {
-            "version": "2.1.0",
-            "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
-            "runs": [{
-              "tool": {
-                "driver": {
-                  "name": "Bearer",
-                  "informationUri": "https://docs.bearer.com/",
-                  "version": "1.0.0",
-                  "rules": []
-                }
-              },
-              "results": []
-            }]
-          }
-          EOF
-            echo "sarif-valid=false" >> $GITHUB_OUTPUT
-          fi
-          
-          # Output debug information
-          echo "::group::Bearer SARIF File Preview"
-          head -50 bearer-results.sarif || true
-          echo "::endgroup::"
+        uses: bearer/bearer-action@v2
+        with:
+          format: sarif
+          output: bearer-results.sarif
+          exit-code: 0
 
       - name: Upload Bearer SARIF results
         uses: github/codeql-action/upload-sarif@v3
         if: always()
-        continue-on-error: true
         with:
           sarif_file: bearer-results.sarif
           category: "bearer-security"
-          wait-for-processing: true
 
 
   secrets-scan:
     name: Secret Detection
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
+      security-events: write
     
     steps:
       - name: Checkout code
@@ -232,6 +159,9 @@ jobs:
     name: Container Scan - Trivy
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
     
     steps:
       - name: Checkout code
@@ -242,42 +172,19 @@ jobs:
           docker build -t bearer-mcp:security-scan .
 
       - name: Run Trivy container scan
-        uses: aquasecurity/trivy-action@master
-        continue-on-error: true
+        uses: aquasecurity/trivy-action@0.32.0
         with:
           image-ref: bearer-mcp:security-scan
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-          severity: 'CRITICAL,HIGH,MEDIUM'
-          vuln-type: 'os,library'
-
-      - name: Validate and Upload Trivy SARIF results
-        if: always()
-        continue-on-error: true
-        run: |
-          # Validate Trivy SARIF before upload
-          if [ -f trivy-results.sarif ]; then
-            echo "Trivy SARIF file found"
-            if python3 -m json.tool trivy-results.sarif > /dev/null 2>&1; then
-              echo "Trivy SARIF is valid JSON, uploading..."
-            else
-              echo "Warning: Trivy SARIF may be malformed, attempting to fix..."
-              # Try to fix common issues
-              python3 -c "import json; data = open('trivy-results.sarif').read(); json.loads(data)" 2>/dev/null || 
-              echo '{"version":"2.1.0","runs":[]}' > trivy-results.sarif
-            fi
-          else
-            echo "No Trivy SARIF file found"
-          fi
+          format: sarif
+          output: trivy-results.sarif
+          severity: CRITICAL,HIGH,MEDIUM
+          vuln-type: os,library
 
       - name: Upload Trivy SARIF results
         uses: github/codeql-action/upload-sarif@v3
-        if: always() && hashFiles('trivy-results.sarif') != ''
-        continue-on-error: true
         with:
           sarif_file: trivy-results.sarif
           category: "trivy-container"
-          wait-for-processing: true
 
 
   # Debug job to check SARIF uploads
