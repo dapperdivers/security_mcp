@@ -66,11 +66,11 @@ Repository = "https://github.com/bearer/bearer"
 Issues = "https://github.com/bearer/bearer/issues"
 
 [project.scripts]
-bearer-mcp-server = "bearer_mcp_server:main"
+bearer-mcp-server = "bearer_mcp.__main__:run"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["bearer_mcp_server*"]
+include = ["bearer_mcp*"]
 
 [tool.black]
 line-length = 88
