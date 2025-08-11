@@ -3,27 +3,25 @@
 FROM python:3.11-slim AS builder
 
 # Build arguments
-ARG BEARER_VERSION=1.50.0
 ARG TARGETARCH=amd64
 
-# Install build dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
-# Download Bearer CLI with architecture detection
-RUN ARCH_SUFFIX=$(case "${TARGETARCH}" in \
-        amd64) echo "linux_amd64" ;; \
-        arm64) echo "linux_arm64" ;; \
-        *) echo "linux_amd64" ;; \
-    esac) && \
-    curl -L --retry 5 --retry-delay 10 --max-time 300 \
-        -o /tmp/bearer.tar.gz \
-        "https://github.com/Bearer/bearer/releases/download/v${BEARER_VERSION}/bearer_${BEARER_VERSION}_${ARCH_SUFFIX}.tar.gz" && \
-    tar -xzf /tmp/bearer.tar.gz -C /tmp/ && \
-    chmod +x /tmp/bearer && \
-    rm /tmp/bearer.tar.gz
+# Install build dependencies and Bearer CLI from official APT repository
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        curl \
+        ca-certificates \
+        apt-transport-https \
+        gnupg \
+    && update-ca-certificates && \
+    echo "deb [trusted=yes] https://apt.fury.io/bearer/ /" | tee -a /etc/apt/sources.list.d/fury.list && \
+    apt-get update && \
+    apt-get install -y bearer && \
+    # Copy bearer to /tmp for builder stage
+    cp $(which bearer) /tmp/bearer && \
+    bearer version && \
+    # Clean up APT cache to reduce image size
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 # Create Python virtual environment and install dependencies
 WORKDIR /app
@@ -39,7 +37,6 @@ RUN python -m venv /opt/venv && \
 FROM python:3.11-slim AS runtime
 
 # Runtime build arguments for metadata
-ARG BEARER_VERSION=1.50.0
 ARG BUILD_DATE
 ARG VCS_REF
 ARG VERSION=1.0.1
@@ -100,13 +97,13 @@ VOLUME ["/workspace", "/tmp"]
 # Security and build metadata labels
 LABEL maintainer="Bearer MCP Server Team" \
       org.opencontainers.image.title="Bearer MCP Server" \
-      org.opencontainers.image.description="MCP server that wraps the Bearer CLI security scanning tool" \
+      org.opencontainers.image.description="MCP server that wraps the Bearer CLI security scanning tool with auto-updated Bearer version" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.created="${BUILD_DATE}" \
       org.opencontainers.image.revision="${VCS_REF}" \
       org.opencontainers.image.vendor="Bearer" \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.source="https://github.com/Bearer/bearer-mcp-server" \
-      bearer.version="${BEARER_VERSION}" \
+      bearer.version="1.0.1" \
       security.non-root="true" \
       security.readonly-rootfs="supported"

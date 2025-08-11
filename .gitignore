@@ -39,6 +39,7 @@ env/
 htmlcov/
 .tox/
 .hypothesis/
+sbom-output/
 
 # Logs
 *.log

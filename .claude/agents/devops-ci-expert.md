@@ -2,7 +2,7 @@
 name: devops-ci-expert
 description: Use PROACTIVELY for creating production-ready Dockerfiles, GitHub Actions workflows, CI/CD pipelines, and implementing DevOps security best practices. Specialist for container optimization, pipeline automation, and infrastructure security.
 tools: Read, Write, MultiEdit, Bash, Glob, Grep, WebFetch
-model: sonnet
+model: opus
 color: cyan
 ---
 

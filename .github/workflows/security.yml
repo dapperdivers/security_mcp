@@ -16,9 +16,6 @@ permissions:
   actions: read
   id-token: write
 
-env:
-  BEARER_VERSION: "1.50.0"
-
 jobs:
   sast-codeql:
     name: CodeQL SAST Analysis
@@ -134,11 +131,13 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install Bearer CLI
+      - name: Install Bearer CLI (Latest)
         run: |
+          BEARER_VERSION=$(curl -s https://api.github.com/repos/Bearer/bearer/releases/latest | grep '"tag_name":' | sed -E 's/.*"v([^"]+)".*/\1/')
+          echo "Installing Bearer v${BEARER_VERSION}"
           curl -L --retry 3 --retry-delay 5 \
             -o /tmp/bearer.tar.gz \
-            "https://github.com/Bearer/bearer/releases/download/v${{ env.BEARER_VERSION }}/bearer_${{ env.BEARER_VERSION }}_linux_amd64.tar.gz"
+            "https://github.com/Bearer/bearer/releases/download/v${BEARER_VERSION}/bearer_${BEARER_VERSION}_linux_amd64.tar.gz"
           sudo tar -xzf /tmp/bearer.tar.gz -C /usr/local/bin/
           sudo chmod +x /usr/local/bin/bearer
           bearer version
@@ -264,24 +263,18 @@ jobs:
         with:
           sarif_file: 'trivy-results.sarif'
 
-      - name: Generate SBOM with Syft
+      - name: Generate lightweight SBOM for vulnerability scanning
         uses: anchore/sbom-action@v0.17.2
         with:
           image: bearer-mcp:security-scan
           format: spdx-json
-          output-file: sbom.spdx.json
-
-      - name: Upload SBOM
-        uses: actions/upload-artifact@v4
-        with:
-          name: sbom
-          path: sbom.spdx.json
+          output-file: sbom-security-scan.spdx.json
 
       - name: Scan SBOM with Grype
         uses: anchore/scan-action@v4
         id: grype-scan
         with:
-          sbom: sbom.spdx.json
+          sbom: sbom-security-scan.spdx.json
           fail-build: false
 
       - name: Upload Grype scan results
@@ -289,6 +282,13 @@ jobs:
         if: always()
         with:
           sarif_file: ${{ steps.grype-scan.outputs.sarif }}
+
+      - name: Upload security scan SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-scan-sbom
+          path: sbom-security-scan.spdx.json
+          retention-days: 7  # Short retention for security scans
 
   security-summary:
     name: Security Summary
@@ -309,12 +309,12 @@ jobs:
           echo ""
           
           FAILED_SCANS=0
-          [ "${{ needs.sast-codeql.result }}" = "failure" ] && ((FAILED_SCANS++))
-          [ "${{ needs.sca-dependency-scan.result }}" = "failure" ] && ((FAILED_SCANS++))
-          [ "${{ needs.bearer-sast-scan.result }}" = "failure" ] && ((FAILED_SCANS++))
-          [ "${{ needs.semgrep-sast.result }}" = "failure" ] && ((FAILED_SCANS++))
-          [ "${{ needs.secrets-scan.result }}" = "failure" ] && ((FAILED_SCANS++))
-          [ "${{ needs.container-scan.result }}" = "failure" ] && ((FAILED_SCANS++))
+          [ "${{ needs.sast-codeql.result }}" = "failure" ] && FAILED_SCANS=$((FAILED_SCANS + 1))
+          [ "${{ needs.sca-dependency-scan.result }}" = "failure" ] && FAILED_SCANS=$((FAILED_SCANS + 1))
+          [ "${{ needs.bearer-sast-scan.result }}" = "failure" ] && FAILED_SCANS=$((FAILED_SCANS + 1))
+          [ "${{ needs.semgrep-sast.result }}" = "failure" ] && FAILED_SCANS=$((FAILED_SCANS + 1))
+          [ "${{ needs.secrets-scan.result }}" = "failure" ] && FAILED_SCANS=$((FAILED_SCANS + 1))
+          [ "${{ needs.container-scan.result }}" = "failure" ] && FAILED_SCANS=$((FAILED_SCANS + 1))
           
           if [ $FAILED_SCANS -eq 0 ]; then
             echo "✓ All security scans completed successfully!"

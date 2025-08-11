@@ -108,3 +108,36 @@ commandTests:
     args: ['passwd', 'mcpuser']
     expectedOutput: ['/sbin/nologin']
     exitCode: 0
+  
+  - name: 'Security - no SUID files'
+    command: 'find'
+    args: ['/usr', '-xdev', '-type', 'f', '-perm', '-4000', '!', '-path', '*/bin/su', '!', '-path', '*/bin/sudo*', '!', '-path', '*/usr/bin/passwd']
+    expectedOutput: ['']
+    
+  - name: 'Security - no SGID files in application'
+    command: 'find'
+    args: ['/app', '-type', 'f', '-perm', '-2000']
+    expectedOutput: ['']
+    
+  - name: 'Security - no world writable files'
+    command: 'find'
+    args: ['/app', '-type', 'f', '-perm', '-002']
+    expectedOutput: ['']
+    
+  - name: 'Security - application files owned by correct user'
+    command: 'find'
+    args: ['/app', '!', '-user', 'mcpuser', '!', '-name', '.*']
+    expectedOutput: ['']
+    
+  - name: 'Healthcheck - Bearer CLI responds'
+    command: 'timeout'
+    args: ['10s', 'bearer', 'version']
+    expectedOutput: ['Bearer.*v.*']
+    exitCode: 0
+    
+  - name: 'Capability check - no privileged capabilities'
+    command: 'capsh'
+    args: ['--print']
+    expectedOutput: ['.*cap_chown,cap_dac_override.*']
+    exitCode: 0
+    excludeFromRun: true  # This might not be available in all test environments

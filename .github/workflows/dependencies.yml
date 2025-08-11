@@ -26,9 +26,6 @@ permissions:
   pull-requests: write
   issues: write
 
-env:
-  BEARER_VERSION: "1.50.0"
-
 jobs:
   dependency-update:
     name: Update Dependencies
@@ -167,47 +164,31 @@ jobs:
       - name: Check Bearer CLI version
         id: bearer-check
         run: |
-          # Check if there's a newer Bearer CLI version
-          CURRENT_VERSION=$(grep "BEARER_VERSION=" Dockerfile | cut -d'=' -f2 || echo "${{ env.BEARER_VERSION }}")
-          echo "Current Bearer version: ${CURRENT_VERSION}"
+          # Bearer CLI is now automatically updated in the Dockerfile
+          # This check is kept for reporting purposes only
           
           # Get latest release from GitHub API
           LATEST_VERSION=$(curl -s https://api.github.com/repos/Bearer/bearer/releases/latest | jq -r '.tag_name' | sed 's/^v//')
-          echo "Latest Bearer version: ${LATEST_VERSION}"
+          echo "Latest Bearer version available: ${LATEST_VERSION}"
+          echo "Note: Bearer is automatically updated to latest version during Docker build"
           
-          echo "current-version=${CURRENT_VERSION}" >> $GITHUB_OUTPUT
           echo "latest-version=${LATEST_VERSION}" >> $GITHUB_OUTPUT
-          
-          if [ "${CURRENT_VERSION}" != "${LATEST_VERSION}" ]; then
-            echo "Bearer CLI update available: ${CURRENT_VERSION} -> ${LATEST_VERSION}"
-            echo "bearer-update=true" >> $GITHUB_OUTPUT
-            
-            # Update Dockerfile with new version
-            sed -i "s/BEARER_VERSION=.*/BEARER_VERSION=${LATEST_VERSION}/g" Dockerfile
-            sed -i "s/bearer_.*_linux_amd64.tar.gz/bearer_${LATEST_VERSION}_linux_amd64.tar.gz/g" Dockerfile
-            
-            # Update workflow files with new Bearer version
-            sed -i "s/BEARER_VERSION: \".*\"/BEARER_VERSION: \"${LATEST_VERSION}\"/g" .github/workflows/*.yml
-          else
-            echo "Bearer CLI is up to date"
-            echo "bearer-update=false" >> $GITHUB_OUTPUT
-          fi
+          echo "bearer-update=false" >> $GITHUB_OUTPUT
 
       - name: Create pull request
-        if: (steps.update-deps.outputs.has-updates == 'true' || steps.bearer-check.outputs.bearer-update == 'true') && (inputs.create_pr != false)
+        if: steps.update-deps.outputs.has-updates == 'true' && (inputs.create_pr != false)
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           commit-message: |
-            chore: update dependencies and tools
+            chore: update dependencies
             
             - Updated ${{ steps.update-deps.outputs.outdated-count }} Python packages
-            - Bearer CLI: ${{ steps.bearer-check.outputs.current-version }} -> ${{ steps.bearer-check.outputs.latest-version }}
             
             🤖 Generated with [Claude Code](https://claude.ai/code)
             
             Co-Authored-By: Claude <noreply@anthropic.com>
-          title: 'chore: automated dependency updates (${{ inputs.update_type || "minor" }})'
+          title: "chore: automated dependency updates (${{ inputs.update_type || 'minor' }})"
           body: |
             ## Dependency Updates Summary
             
@@ -220,8 +201,8 @@ jobs:
             - **Smoke tests**: ✅ Passed
             
             ### Bearer CLI
-            - **Current version**: `${{ steps.bearer-check.outputs.current-version }}`
-            - **Updated to**: `${{ steps.bearer-check.outputs.latest-version }}`
+            - **Status**: Automatically updated to latest version during Docker build
+            - **Latest available**: `${{ steps.bearer-check.outputs.latest-version }}`
             
             ### Test Results
             - [x] Smoke tests passed
@@ -287,9 +268,8 @@ jobs:
         run: |
           echo "=== Bearer CLI Version Check ==="
           
-          # Get current version from Dockerfile
-          CURRENT=$(grep "BEARER_VERSION=" Dockerfile | cut -d'=' -f2 || echo "${{ env.BEARER_VERSION }}")
-          echo "Current version: ${CURRENT}"
+          # Bearer is now automatically updated in Dockerfile
+          echo "Bearer CLI: Automatically fetches latest version during Docker build"
           
           # Get latest version from GitHub releases
           LATEST=$(curl -s https://api.github.com/repos/Bearer/bearer/releases/latest | jq -r '.tag_name' | sed 's/^v//')

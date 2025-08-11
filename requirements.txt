@@ -1,5 +1,10 @@
+# Core MCP and web server dependencies
 mcp>=1.2.0
 fastapi>=0.104.0
 uvicorn>=0.24.0
 starlette>=0.27.0
 sse-starlette>=1.6.0
+
+# Security and compatibility
+certifi>=2023.7.22  # Updated certificates
+requests>=2.31.0    # HTTP client with security fixes

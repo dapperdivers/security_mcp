@@ -18,7 +18,6 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
   PLATFORMS: linux/amd64,linux/arm64
-  BEARER_VERSION: "1.50.0"
 
 jobs:
   docker-build:
@@ -88,7 +87,6 @@ jobs:
             BUILD_DATE=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.created'] }}
             VCS_REF=${{ github.sha }}
             VERSION=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.version'] }}
-            BEARER_VERSION=${{ env.BEARER_VERSION }}
           provenance: true
           sbom: true
 
