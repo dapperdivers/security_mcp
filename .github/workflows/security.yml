@@ -1,17 +1,55 @@
-name: Security Scanning
+name: Comprehensive Security Scanning
 
 on:
   push:
     branches: [main, master]
   pull_request:
     branches: [main, master]
+  schedule:
+    # Run at 3 AM UTC on Mondays to catch any issues
+    - cron: '0 3 * * 1'
   workflow_dispatch:
 
 permissions:
   contents: read
   security-events: write
+  actions: read
 
 jobs:
+  # CodeQL Analysis for static application security testing (SAST)
+  codeql-analyze:
+    name: CodeQL Analysis - Python
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: python
+          # Use extended security queries for comprehensive coverage
+          queries: security-extended
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        continue-on-error: true
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt || true
+          # Continue even if some dependencies fail to install
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "codeql:language/python"
+
   dependency-check:
     name: Dependency Security Check
     runs-on: ubuntu-latest
@@ -27,11 +65,12 @@ jobs:
           python-version: '3.11'
 
       - name: Install and run Safety check
+        continue-on-error: true
         run: |
           python -m pip install --upgrade pip
           pip install safety
           
-          # Run safety check and continue on error
+          # Run safety check and continue on error to capture results
           echo "=== Checking for known vulnerabilities ==="
           safety check --continue-on-error || true
 
@@ -55,12 +94,22 @@ jobs:
           bearer version
 
       - name: Run Bearer Security Scan
+        continue-on-error: true
         run: |
           bearer scan . \
             --severity high,critical \
-            --quiet || true
+            --format sarif \
+            --output bearer-results.sarif || true
           
           echo "Bearer scan completed."
+
+      - name: Upload Bearer SARIF results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        continue-on-error: true
+        with:
+          sarif_file: bearer-results.sarif
+          category: "bearer-security-scan"
 
 
   secrets-scan:
@@ -80,26 +129,113 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  # Container Security Scanning with Grype
+  container-scan-grype:
+    name: Container Scan - Grype
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          docker build -t bearer-mcp:security-scan .
+
+      - name: Run Grype container scan
+        uses: anchore/scan-action@v3
+        id: grype
+        continue-on-error: true
+        with:
+          image: bearer-mcp:security-scan
+          fail-build: false
+          severity-cutoff: none
+          output-format: sarif
+
+      - name: Upload Grype SARIF results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        continue-on-error: true
+        with:
+          sarif_file: ${{ steps.grype.outputs.sarif }}
+          category: "grype-container-scan"
+
+  # Container Security Scanning with Trivy
+  container-scan-trivy:
+    name: Container Scan - Trivy
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          docker build -t bearer-mcp:security-scan .
+
+      - name: Run Trivy container scan
+        uses: aquasecurity/trivy-action@master
+        continue-on-error: true
+        with:
+          image-ref: bearer-mcp:security-scan
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+          vuln-type: 'os,library'
+
+      - name: Upload Trivy SARIF results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        continue-on-error: true
+        with:
+          sarif_file: trivy-results.sarif
+          category: "trivy-container-scan"
+
 
   security-summary:
     name: Security Summary
     runs-on: ubuntu-latest
-    needs: [dependency-check, bearer-scan, secrets-scan]
+    needs: [codeql-analyze, dependency-check, bearer-scan, secrets-scan, container-scan-grype, container-scan-trivy]
     if: always()
     
     steps:
       - name: Security Scan Summary
         run: |
-          echo "=== Security Scan Results Summary ==="
+          echo "=== Comprehensive Security Scan Results Summary ==="
+          echo "CodeQL Analysis: ${{ needs.codeql-analyze.result }}"
           echo "Dependency Check: ${{ needs.dependency-check.result }}"
           echo "Bearer Scan: ${{ needs.bearer-scan.result }}"
           echo "Secret Detection: ${{ needs.secrets-scan.result }}"
+          echo "Container Scan (Grype): ${{ needs.container-scan-grype.result }}"
+          echo "Container Scan (Trivy): ${{ needs.container-scan-trivy.result }}"
           echo ""
           
-          if [ "${{ needs.dependency-check.result }}" = "success" ] && \
-             [ "${{ needs.bearer-scan.result }}" = "success" ] && \
-             [ "${{ needs.secrets-scan.result }}" = "success" ]; then
+          # Count successful scans
+          SUCCESS_COUNT=0
+          TOTAL_SCANS=6
+          
+          [ "${{ needs.codeql-analyze.result }}" = "success" ] && SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+          [ "${{ needs.dependency-check.result }}" = "success" ] && SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+          [ "${{ needs.bearer-scan.result }}" = "success" ] && SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+          [ "${{ needs.secrets-scan.result }}" = "success" ] && SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+          [ "${{ needs.container-scan-grype.result }}" = "success" ] && SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+          [ "${{ needs.container-scan-trivy.result }}" = "success" ] && SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+          
+          echo "Successfully completed: ${SUCCESS_COUNT}/${TOTAL_SCANS} scans"
+          echo ""
+          
+          if [ "$SUCCESS_COUNT" -eq "$TOTAL_SCANS" ]; then
             echo "✓ All security scans completed successfully!"
+            echo "All results have been uploaded to GitHub Security Dashboard."
           else
-            echo "⚠ Some security scans had issues - review logs above"
+            echo "⚠ Some security scans encountered issues - review logs above"
+            echo "Check the GitHub Security tab for detailed vulnerability reports."
           fi
+          
+          echo ""
+          echo "=== Next Steps ==="
+          echo "1. Review the Security tab in GitHub for detailed findings"
+          echo "2. Address any critical or high severity vulnerabilities"
+          echo "3. Check workflow logs for any scan failures"
