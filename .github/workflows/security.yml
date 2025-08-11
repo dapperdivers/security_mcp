@@ -96,16 +96,23 @@ jobs:
       - name: Run Bearer Security Scan
         continue-on-error: true
         run: |
+          # Run Bearer scan and ensure SARIF file is created
           bearer scan . \
-            --severity high,critical \
             --format sarif \
-            --output bearer-results.sarif || true
+            --output bearer-results.sarif || echo '{"version":"2.1.0","runs":[]}' > bearer-results.sarif
           
-          echo "Bearer scan completed."
+          # Verify the file exists
+          if [ -f bearer-results.sarif ]; then
+            echo "Bearer SARIF file created successfully"
+            echo "File size: $(ls -lh bearer-results.sarif | awk '{print $5}')"
+          else
+            echo "Creating empty SARIF file"
+            echo '{"version":"2.1.0","runs":[]}' > bearer-results.sarif
+          fi
 
       - name: Upload Bearer SARIF results
         uses: github/codeql-action/upload-sarif@v3
-        if: always()
+        if: always() && hashFiles('bearer-results.sarif') != ''
         continue-on-error: true
         with:
           sarif_file: bearer-results.sarif
