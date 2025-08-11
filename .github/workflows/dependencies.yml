@@ -140,7 +140,7 @@ jobs:
           echo "=== Security scan of updated dependencies ==="
           
           # Run Safety check
-          safety check --json --output safety-updated.json || true
+          safety scan --json --output safety-updated.json || true
           
           # Show results
           if [ -f safety-updated.json ]; then

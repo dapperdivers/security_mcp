@@ -193,7 +193,7 @@ jobs:
           echo "=== Pre-Release Security Scan ==="
           
           # Run safety check
-          safety check --json --output safety-release.json || true
+          safety scan --json --output safety-release.json || true
           
           # Check results
           if [ -f safety-release.json ]; then

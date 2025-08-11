@@ -73,7 +73,7 @@ jobs:
           
           # Run safety check and continue on error to capture results
           echo "=== Checking for known vulnerabilities ==="
-          safety check --continue-on-error || true
+          safety scan --continue-on-error || true
 
   bearer-scan:
     name: Bearer Security Scan
