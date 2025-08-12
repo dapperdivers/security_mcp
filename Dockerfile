@@ -1,4 +1,4 @@
-# Multi-stage production Dockerfile with security best practices
+# Multi-stage production Dockerfile with enhanced security best practices
 # Build stage - for downloading and preparing dependencies
 FROM python:3.11-slim-bookworm AS builder
 
@@ -6,7 +6,9 @@ FROM python:3.11-slim-bookworm AS builder
 ARG TARGETARCH=amd64
 
 # Install build dependencies and Bearer CLI from official APT repository
+# Update all packages first to get latest security patches
 RUN apt-get update && \
+    apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
         curl \
         ca-certificates \
@@ -27,29 +29,31 @@ RUN apt-get update && \
 WORKDIR /app
 COPY requirements.txt pyproject.toml ./
 
-# Create virtual environment and install dependencies
+# Create virtual environment and install dependencies with latest pip
 RUN python -m venv /opt/venv && \
     . /opt/venv/bin/activate && \
     pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -r requirements.txt
 
-# Runtime stage - minimal final image
+# Runtime stage - minimal final image with latest security patches
 FROM python:3.11-slim-bookworm AS runtime
 
 # Runtime build arguments for metadata
 ARG BUILD_DATE
 ARG VCS_REF
-ARG VERSION=1.0.1
+ARG VERSION=1.0.2
 
 # Install minimal runtime dependencies including git for Bearer scanning
-# Update all packages to latest security patches
+# Perform full system upgrade to get all security patches
 RUN apt-get update && \
     apt-get upgrade -y && \
+    apt-get dist-upgrade -y && \
     apt-get install -y --no-install-recommends \
     ca-certificates \
     git \
-    && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean
+    && apt-get autoremove -y && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
 # Copy Bearer CLI from builder stage
 COPY --from=builder /tmp/bearer /usr/local/bin/bearer
@@ -107,6 +111,6 @@ LABEL maintainer="dapperdivers" \
       org.opencontainers.image.vendor="dapperdivers" \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.source="https://github.com/dapperdivers/security_mcp" \
-      bearer.version="1.0.1" \
+      bearer.version="latest" \
       security.non-root="true" \
       security.readonly-rootfs="supported"
