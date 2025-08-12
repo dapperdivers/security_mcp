@@ -94,6 +94,14 @@ jobs:
           output: bearer-results.sarif
           exit-code: 0
 
+      - name: Ensure Bearer SARIF is valid
+        if: always()
+        run: |
+          # Fix common SARIF issues where results is null instead of empty array
+          if [ -f bearer-results.sarif ]; then
+            python3 -c "import json; d=json.load(open('bearer-results.sarif')); [r.setdefault('results',[]) for r in d.get('runs',[])]; json.dump(d,open('bearer-results.sarif','w'),indent=2)"
+          fi
+
       - name: Upload Bearer SARIF results
         uses: github/codeql-action/upload-sarif@v3
         if: always()
